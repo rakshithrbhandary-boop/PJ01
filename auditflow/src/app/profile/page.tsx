@@ -25,11 +25,10 @@ export default function ProfilePage() {
         .from('profile_change_requests')
         .select('*')
         .eq('user_id', user.id)
-        .in('status', ['pending', 'rejected'])
         .order('created_at', { ascending: false })
         .limit(1)
         .single()
-      if (req) setPendingRequest(req)
+      if (req && (req.status === 'pending' || req.status === 'rejected')) setPendingRequest(req)
     }
     load()
   }, [])
