@@ -41,19 +41,26 @@ export default function ObservationsPage() {
 
   useEffect(() => {
     let q = supabase.from('observations')
-      .select('*, raiser:profiles(full_name)')
+      .select('*')
       .order('created_at', { ascending: false })
     if (riskFilter) q = q.eq('risk_level', riskFilter)
-    q.then(async ({ data: obsData }) => {
+    q.then(async ({ data: obsData, error }) => {
+      console.log('obs query', obsData, error)
       if (!obsData) { setLoading(false); return }
-      // Fetch assignment titles separately to avoid RLS join filtering
+      // Fetch raiser names and assignment titles separately to avoid RLS join filtering
+      const raisedByIds = [...new Set(obsData.map(o => o.raised_by).filter(Boolean))]
       const assignmentIds = [...new Set(obsData.map(o => o.assignment_id).filter(Boolean))]
-      let assignmentMap: Record<string, string> = {}
-      if (assignmentIds.length > 0) {
-        const { data: aData } = await supabase.from('assignments').select('id, title').in('id', assignmentIds as string[])
-        assignmentMap = Object.fromEntries((aData ?? []).map(a => [a.id, a.title]))
-      }
-      setObs(obsData.map(o => ({ ...o, _assignmentTitle: assignmentMap[o.assignment_id as string] ?? null })))
+      const [{ data: profilesData }, { data: assignmentsData }] = await Promise.all([
+        raisedByIds.length > 0 ? supabase.from('profiles').select('id, full_name').in('id', raisedByIds as string[]) : Promise.resolve({ data: [] }),
+        assignmentIds.length > 0 ? supabase.from('assignments').select('id, title').in('id', assignmentIds as string[]) : Promise.resolve({ data: [] }),
+      ])
+      const profileMap = Object.fromEntries((profilesData ?? []).map(p => [p.id, p.full_name]))
+      const assignmentMap = Object.fromEntries((assignmentsData ?? []).map(a => [a.id, a.title]))
+      setObs(obsData.map(o => ({
+        ...o,
+        _raisedByName: profileMap[o.raised_by as string] ?? '—',
+        _assignmentTitle: assignmentMap[o.assignment_id as string] ?? '—',
+      })))
       setLoading(false)
     })
   }, [riskFilter])
@@ -174,7 +181,7 @@ export default function ObservationsPage() {
                           {(o.status as string).replace('_', ' ')}
                         </span>
                       </div>
-                      <div className="text-sm text-gray-600">{(o.raiser as { full_name?: string })?.full_name ?? '—'}</div>
+                      <div className="text-sm text-gray-600">{(o._raisedByName as string) ?? '—'}</div>
                     </div>
 
                     {/* Expanded Panel */}
