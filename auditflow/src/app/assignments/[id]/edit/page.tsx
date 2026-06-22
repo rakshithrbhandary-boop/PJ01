@@ -21,9 +21,10 @@ export default function EditAssignmentPage() {
   const router = useRouter()
   const { id } = useParams()
   const [userId, setUserId] = useState('')
+  const [assistantManagers, setAssistantManagers] = useState<{ id: string; full_name: string }[]>([])
   const [form, setForm] = useState({
     title: '', type: 'internal_audit', status: 'planning',
-    client_name: '', start_date: '', due_date: '', description: '',
+    client_name: '', start_date: '', due_date: '', description: '', assigned_to: '',
   })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -31,11 +32,14 @@ export default function EditAssignmentPage() {
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => { if (user) setUserId(user.id) })
+    supabase.from('profiles').select('id, full_name').eq('role', 'assistant_manager')
+      .then(({ data }) => setAssistantManagers(data ?? []))
     supabase.from('assignments').select('*').eq('id', id as string).single().then(({ data }) => {
       if (data) setForm({
         title: data.title, type: data.type, status: data.status,
         client_name: data.client_name, start_date: data.start_date,
         due_date: data.due_date, description: data.description ?? '',
+        assigned_to: data.assigned_to ?? '',
       })
       setLoading(false)
     })
@@ -44,7 +48,8 @@ export default function EditAssignmentPage() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setSaving(true)
-    const { error: err } = await supabase.from('assignments').update(form).eq('id', id as string)
+    const payload = { ...form, assigned_to: form.assigned_to || null }
+    const { error: err } = await supabase.from('assignments').update(payload).eq('id', id as string)
     if (err) { setError(err.message); setSaving(false); return }
     await logAction(userId, 'UPDATE', 'assignment', id as string, { title: form.title })
     router.push(`/assignments/${id}`)
@@ -57,7 +62,6 @@ export default function EditAssignmentPage() {
       <div className="max-w-2xl">
         <div className="mb-6">
           <h1 className="text-2xl font-bold text-gray-900">Edit Assignment</h1>
-          <p className="text-gray-500 mt-1">Update assignment details</p>
         </div>
         <form onSubmit={handleSubmit} className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 space-y-5">
           <div>
@@ -89,6 +93,14 @@ export default function EditAssignmentPage() {
             <input required value={form.client_name} onChange={e => setForm({ ...form, client_name: e.target.value })}
               className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
           </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Assign to Assistant Manager</label>
+            <select value={form.assigned_to} onChange={e => setForm({ ...form, assigned_to: e.target.value })}
+              className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+              <option value="">— Unassigned —</option>
+              {assistantManagers.map(m => <option key={m.id} value={m.id}>{m.full_name}</option>)}
+            </select>
+          </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Start Date *</label>
@@ -113,9 +125,7 @@ export default function EditAssignmentPage() {
               {saving ? 'Saving...' : 'Save Changes'}
             </button>
             <button type="button" onClick={() => router.back()}
-              className="text-gray-600 px-6 py-2.5 rounded-lg font-medium hover:bg-gray-100">
-              Cancel
-            </button>
+              className="text-gray-600 px-6 py-2.5 rounded-lg font-medium hover:bg-gray-100">Cancel</button>
           </div>
         </form>
       </div>
