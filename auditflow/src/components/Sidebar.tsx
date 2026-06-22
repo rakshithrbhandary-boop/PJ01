@@ -10,6 +10,9 @@ const navItems = [
   { href: '/observations', label: 'Observations', icon: '🔍' },
   { href: '/timesheets', label: 'Timesheets', icon: '⏱️' },
   { href: '/reports', label: 'Reports', icon: '📈' },
+]
+
+const managerOnlyItems = [
   { href: '/audit-trail', label: 'Audit Trail', icon: '🔒' },
 ]
 
@@ -57,6 +60,15 @@ export default function Sidebar({ profile }: { profile: Profile | null }) {
 
         {profile?.role === 'manager' && (
           <>
+            {managerOnlyItems.map(item => {
+              const active = pathname === item.href || pathname.startsWith(item.href + '/')
+              return (
+                <Link key={item.href} href={item.href}
+                  className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${active ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-800 hover:text-white'}`}>
+                  <span>{item.icon}</span>{item.label}
+                </Link>
+              )
+            })}
             <div className="pt-4 pb-1">
               <p className="text-gray-500 text-xs uppercase tracking-wider px-3">Administration</p>
             </div>

@@ -1,5 +1,6 @@
 'use client'
 import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import AppShell from '@/components/AppShell'
 import { supabase } from '@/lib/supabase'
 
@@ -13,14 +14,23 @@ const ACTION_COLORS: Record<string, string> = {
 export default function AuditTrailPage() {
   const [logs, setLogs] = useState<Record<string, unknown>[]>([])
   const [loading, setLoading] = useState(true)
+  const router = useRouter()
 
   useEffect(() => {
-    supabase.from('audit_logs')
-      .select('*, user:profiles(full_name)')
-      .order('created_at', { ascending: false })
-      .limit(100)
-      .then(({ data }) => { setLogs(data ?? []); setLoading(false) })
-  }, [])
+    async function load() {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+      const { data: p } = await supabase.from('profiles').select('role').eq('id', user.id).single()
+      if (p?.role !== 'manager') { router.replace('/dashboard'); return }
+      const { data } = await supabase.from('audit_logs')
+        .select('*, user:profiles(full_name)')
+        .order('created_at', { ascending: false })
+        .limit(100)
+      setLogs(data ?? [])
+      setLoading(false)
+    }
+    load()
+  }, [router])
 
   return (
     <AppShell>
