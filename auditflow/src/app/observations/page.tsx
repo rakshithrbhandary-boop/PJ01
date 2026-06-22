@@ -41,7 +41,7 @@ export default function ObservationsPage() {
 
   useEffect(() => {
     let q = supabase.from('observations')
-      .select('*, raiser:profiles(full_name), assignment:assignments(title), commenter:profiles!observations_manager_input_by_fkey(full_name, role)')
+      .select('*, raiser:profiles(full_name), assignment:assignments(title)')
       .order('created_at', { ascending: false })
     if (riskFilter) q = q.eq('risk_level', riskFilter)
     q.then(({ data }) => { setObs(data ?? []); setLoading(false) })
@@ -67,15 +67,16 @@ export default function ObservationsPage() {
     const now = new Date().toISOString()
     await supabase.from('observations').update({
       manager_input: managerInputs[obsId],
-      manager_input_by: profile.id,
+      manager_input_by_name: profile.full_name,
+      manager_input_by_role: profile.role,
       manager_input_at: now,
     }).eq('id', obsId)
     setObs(prev => prev.map(o => o.id === obsId ? {
       ...o,
       manager_input: managerInputs[obsId],
-      manager_input_by: profile.id,
+      manager_input_by_name: profile.full_name,
+      manager_input_by_role: profile.role,
       manager_input_at: now,
-      commenter: { full_name: profile.full_name, role: profile.role },
     } : o))
     setSavingInput(null)
     setSavedInput(obsId)
@@ -212,10 +213,10 @@ export default function ObservationsPage() {
                                 <div className="mb-3 p-3 bg-white border border-gray-200 rounded-lg">
                                   <div className="flex items-center gap-2 mb-1">
                                     <span className="text-xs font-semibold text-gray-800">
-                                      {(o.commenter as { full_name?: string; role?: string })?.full_name ?? 'Unknown'}
+                                      {(o.manager_input_by_name as string) ?? 'Unknown'}
                                     </span>
                                     <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 capitalize">
-                                      {((o.commenter as { role?: string })?.role ?? '').replace('_', ' ')}
+                                      {((o.manager_input_by_role as string) ?? '').replace('_', ' ')}
                                     </span>
                                     {(o.manager_input_at as string) && (
                                       <span className="text-xs text-gray-400">
@@ -250,10 +251,10 @@ export default function ObservationsPage() {
                               <div className="p-3 bg-white border border-gray-200 rounded-lg">
                                 <div className="flex items-center gap-2 mb-1">
                                   <span className="text-xs font-semibold text-gray-800">
-                                    {(o.commenter as { full_name?: string })?.full_name ?? 'Management'}
+                                    {(o.manager_input_by_name as string) ?? 'Management'}
                                   </span>
                                   <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 capitalize">
-                                    {((o.commenter as { role?: string })?.role ?? '').replace('_', ' ')}
+                                    {((o.manager_input_by_role as string) ?? '').replace('_', ' ')}
                                   </span>
                                   {(o.manager_input_at as string) && (
                                     <span className="text-xs text-gray-400">
