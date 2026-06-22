@@ -83,8 +83,8 @@ export default function Sidebar({ profile }: { profile: Profile | null }) {
         {profile && (
           <Link href="/profile" className="flex items-center gap-3 mb-3 hover:bg-gray-800 rounded-lg px-2 py-1.5 -mx-2 transition-colors">
             <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center text-white text-sm font-medium overflow-hidden flex-shrink-0">
-              {(profile as Record<string, unknown>).avatar_url ? (
-                <img src={(profile as Record<string, unknown>).avatar_url as string} alt="" className="w-full h-full object-cover" />
+              {profile.avatar_url ? (
+                <img src={profile.avatar_url} alt="" className="w-full h-full object-cover" />
               ) : profile.full_name[0]?.toUpperCase()}
             </div>
             <div className="flex-1 min-w-0">
