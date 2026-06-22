@@ -4,6 +4,7 @@ import { useRouter, useParams } from 'next/navigation'
 import AppShell from '@/components/AppShell'
 import { supabase } from '@/lib/supabase'
 import { logAction } from '@/lib/auth'
+import AssignmentTypeSelect from '@/components/AssignmentTypeSelect'
 
 const STATUS_OPTIONS = [
   { value: 'planning', label: 'Planning' },
@@ -72,13 +73,7 @@ export default function EditAssignmentPage() {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Type *</label>
-              <select value={form.type} onChange={e => setForm({ ...form, type: e.target.value })}
-                className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
-                <option value="internal_audit">Internal Audit</option>
-                <option value="concurrent_audit">Concurrent Audit</option>
-                <option value="process_consulting">Process Consulting</option>
-                <option value="due_diligence">Due Diligence</option>
-              </select>
+              <AssignmentTypeSelect value={form.type} onChange={v => setForm({ ...form, type: v })} />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
