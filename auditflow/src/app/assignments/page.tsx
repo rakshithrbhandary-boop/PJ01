@@ -29,6 +29,13 @@ const STATUS_LABELS: Record<string, string> = {
   on_hold: 'On Hold',
 }
 
+const TASK_STATUS_COLORS: Record<string, string> = {
+  not_started: 'bg-gray-100 text-gray-700',
+  in_progress: 'bg-blue-100 text-blue-700',
+  completed: 'bg-green-100 text-green-700',
+  overdue: 'bg-red-100 text-red-700',
+}
+
 const TYPE_LABELS: Record<string, string> = {
   internal_audit: 'Internal Audit',
   concurrent_audit: 'Concurrent Audit',
@@ -43,6 +50,9 @@ export default function AssignmentsPage() {
   const [filter, setFilter] = useState('')
   const [updatingStatus, setUpdatingStatus] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<string | null>(null)
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({})
+  const [tasksByAssignment, setTasksByAssignment] = useState<Record<string, Record<string, unknown>[]>>({})
+  const [loadingTasks, setLoadingTasks] = useState<Record<string, boolean>>({})
 
   useEffect(() => {
     async function load() {
@@ -60,6 +70,21 @@ export default function AssignmentsPage() {
     }
     load()
   }, [])
+
+  async function toggleExpand(assignmentId: string) {
+    const isOpen = expanded[assignmentId]
+    setExpanded(prev => ({ ...prev, [assignmentId]: !isOpen }))
+    if (!isOpen && !tasksByAssignment[assignmentId]) {
+      setLoadingTasks(prev => ({ ...prev, [assignmentId]: true }))
+      const { data } = await supabase
+        .from('tasks')
+        .select('*, assignee:profiles(full_name)')
+        .eq('assignment_id', assignmentId)
+        .order('created_at')
+      setTasksByAssignment(prev => ({ ...prev, [assignmentId]: data ?? [] }))
+      setLoadingTasks(prev => ({ ...prev, [assignmentId]: false }))
+    }
+  }
 
   async function updateStatus(id: string, status: string) {
     setUpdatingStatus(id)
@@ -86,6 +111,7 @@ export default function AssignmentsPage() {
   )
 
   const allStatuses = Object.entries(STATUS_LABELS)
+  const colSpan = isManager ? 6 : 5
 
   return (
     <AppShell>
@@ -121,65 +147,119 @@ export default function AssignmentsPage() {
             <table className="w-full">
               <thead className="bg-gray-50 border-b border-gray-100">
                 <tr>
-                  <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase">Assignment</th>
-                  <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase">Type</th>
-                  <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase">Status</th>
-                  <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase">Due Date</th>
-                  <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase">Manager</th>
-                  {isManager && <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase">Actions</th>}
+                  <th className="w-8 px-3 py-3"></th>
+                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Assignment</th>
+                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Type</th>
+                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Status</th>
+                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Due Date</th>
+                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Manager</th>
+                  {isManager && <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Actions</th>}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-50">
-                {filtered.map(a => (
-                  <tr key={a.id as string} className="hover:bg-gray-50">
-                    <td className="px-6 py-4">
-                      <Link href={`/assignments/${a.id}`} className="font-medium text-gray-900 hover:text-blue-600">
-                        {a.title as string}
-                      </Link>
-                      <p className="text-sm text-gray-500">{a.client_name as string}</p>
-                    </td>
-                    <td className="px-6 py-4 text-sm text-gray-600">{TYPE_LABELS[a.type as string] ?? a.type as string}</td>
-                    <td className="px-6 py-4">
-                      {isManagerOrAssistant ? (
-                        <select
-                          value={a.status as string}
-                          onChange={e => updateStatus(a.id as string, e.target.value)}
-                          disabled={updatingStatus === a.id}
-                          className={`text-xs font-medium px-2.5 py-1 rounded-full border-0 cursor-pointer ${STATUS_COLORS[a.status as string] ?? 'bg-gray-100'}`}
-                        >
-                          {allStatuses.map(([val, label]) => (
-                            <option key={val} value={val}>{label}</option>
-                          ))}
-                        </select>
-                      ) : (
-                        <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${STATUS_COLORS[a.status as string] ?? 'bg-gray-100'}`}>
-                          {STATUS_LABELS[a.status as string] ?? a.status as string}
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-6 py-4 text-sm text-gray-600">{a.due_date as string}</td>
-                    <td className="px-6 py-4 text-sm text-gray-600">{(a.manager as { full_name?: string })?.full_name ?? '—'}</td>
-                    {isManager && (
-                      <td className="px-6 py-4">
-                        <div className="flex gap-2">
-                          <Link
-                            href={`/assignments/${a.id}/edit`}
-                            className="text-sm text-blue-600 hover:underline font-medium"
-                          >
-                            Edit
-                          </Link>
+              <tbody>
+                {filtered.map(a => {
+                  const aId = a.id as string
+                  const isOpen = expanded[aId] ?? false
+                  const tasks = tasksByAssignment[aId] ?? []
+                  const isLoadingTasks = loadingTasks[aId]
+
+                  return (
+                    <>
+                      <tr key={aId} className="border-t border-gray-50 hover:bg-gray-50">
+                        <td className="px-3 py-4">
                           <button
-                            onClick={() => deleteAssignment(a.id as string, a.title as string)}
-                            disabled={deleting === a.id}
-                            className="text-sm text-red-500 hover:underline font-medium disabled:opacity-50"
+                            onClick={() => toggleExpand(aId)}
+                            className="w-6 h-6 flex items-center justify-center rounded hover:bg-gray-200 transition-colors text-gray-400"
                           >
-                            {deleting === a.id ? 'Deleting...' : 'Delete'}
+                            <svg
+                              className={`w-3.5 h-3.5 transition-transform duration-200 ${isOpen ? 'rotate-90' : ''}`}
+                              fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                            >
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                            </svg>
                           </button>
-                        </div>
-                      </td>
-                    )}
-                  </tr>
-                ))}
+                        </td>
+                        <td className="px-4 py-4">
+                          <Link href={`/assignments/${aId}`} className="font-medium text-gray-900 hover:text-blue-600">
+                            {a.title as string}
+                          </Link>
+                          <p className="text-sm text-gray-500">{a.client_name as string}</p>
+                        </td>
+                        <td className="px-4 py-4 text-sm text-gray-600">{TYPE_LABELS[a.type as string] ?? a.type as string}</td>
+                        <td className="px-4 py-4">
+                          {isManagerOrAssistant ? (
+                            <select
+                              value={a.status as string}
+                              onChange={e => updateStatus(aId, e.target.value)}
+                              disabled={updatingStatus === aId}
+                              className={`text-xs font-medium px-2.5 py-1 rounded-full border-0 cursor-pointer ${STATUS_COLORS[a.status as string] ?? 'bg-gray-100'}`}
+                            >
+                              {allStatuses.map(([val, label]) => (
+                                <option key={val} value={val}>{label}</option>
+                              ))}
+                            </select>
+                          ) : (
+                            <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${STATUS_COLORS[a.status as string] ?? 'bg-gray-100'}`}>
+                              {STATUS_LABELS[a.status as string] ?? a.status as string}
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-4 text-sm text-gray-600">{a.due_date as string}</td>
+                        <td className="px-4 py-4 text-sm text-gray-600">{(a.manager as { full_name?: string })?.full_name ?? '—'}</td>
+                        {isManager && (
+                          <td className="px-4 py-4">
+                            <div className="flex gap-2">
+                              <Link href={`/assignments/${aId}/edit`} className="text-sm text-blue-600 hover:underline font-medium">Edit</Link>
+                              <button
+                                onClick={() => deleteAssignment(aId, a.title as string)}
+                                disabled={deleting === aId}
+                                className="text-sm text-red-500 hover:underline font-medium disabled:opacity-50"
+                              >
+                                {deleting === aId ? 'Deleting...' : 'Delete'}
+                              </button>
+                            </div>
+                          </td>
+                        )}
+                      </tr>
+
+                      {isOpen && (
+                        <tr key={`${aId}-tasks`} className="bg-gray-50 border-t border-gray-100">
+                          <td></td>
+                          <td colSpan={colSpan} className="px-4 py-3">
+                            {isLoadingTasks ? (
+                              <p className="text-xs text-gray-400 py-2">Loading tasks...</p>
+                            ) : tasks.length === 0 ? (
+                              <p className="text-xs text-gray-400 py-2">No tasks added yet.</p>
+                            ) : (
+                              <div className="space-y-1.5">
+                                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Tasks</p>
+                                {tasks.map(t => (
+                                  <div key={t.id as string} className="flex items-center justify-between bg-white rounded-lg px-4 py-2.5 border border-gray-100">
+                                    <div className="flex items-center gap-3">
+                                      <div className={`w-2 h-2 rounded-full ${
+                                        t.status === 'completed' ? 'bg-green-400' :
+                                        t.status === 'in_progress' ? 'bg-blue-400' :
+                                        t.status === 'overdue' ? 'bg-red-400' : 'bg-gray-300'
+                                      }`} />
+                                      <span className="text-sm font-medium text-gray-800">{t.title as string}</span>
+                                    </div>
+                                    <div className="flex items-center gap-4 text-xs text-gray-500">
+                                      <span>→ {(t.assignee as { full_name?: string })?.full_name ?? 'Unassigned'}</span>
+                                      <span>Due {t.due_date as string}</span>
+                                      <span className={`px-2 py-0.5 rounded-full font-medium ${TASK_STATUS_COLORS[t.status as string] ?? 'bg-gray-100 text-gray-700'}`}>
+                                        {(t.status as string).replace(/_/g, ' ')}
+                                      </span>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                    </>
+                  )
+                })}
               </tbody>
             </table>
           )}
