@@ -16,7 +16,24 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         router.replace('/login')
         return
       }
-      const { data } = await supabase.from('profiles').select('*').eq('id', session.user.id).single()
+      // Retry up to 3 times in case of transient failure
+      let data = null
+      for (let i = 0; i < 3; i++) {
+        const res = await supabase.from('profiles').select('*').eq('id', session.user.id).single()
+        if (res.data) { data = res.data; break }
+        await new Promise(r => setTimeout(r, 500))
+      }
+      // Fallback: build minimal profile from auth session so sidebar always shows something
+      if (!data) {
+        data = {
+          id: session.user.id,
+          email: session.user.email ?? '',
+          full_name: session.user.email?.split('@')[0] ?? 'User',
+          role: 'executive',
+          avatar_url: null,
+          created_at: session.user.created_at,
+        }
+      }
       setProfile(data)
       setLoading(false)
     })
