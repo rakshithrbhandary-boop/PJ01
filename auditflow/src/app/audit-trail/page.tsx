@@ -25,7 +25,7 @@ export default function AuditTrailPage() {
       const { data } = await supabase.from('audit_logs')
         .select('*, user:profiles(full_name)')
         .order('created_at', { ascending: false })
-        .limit(100)
+        .limit(20)
       setLogs(data ?? [])
       setLoading(false)
     }
