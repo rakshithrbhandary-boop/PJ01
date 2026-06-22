@@ -91,8 +91,9 @@ export default function AssignmentDetailPage() {
 
   const isManager = currentProfile?.role === 'manager'
   const isAssistantManager = currentProfile?.role === 'assistant_manager'
+  const isExecutive = currentProfile?.role === 'executive'
   const isAssignedAM = isAssistantManager && (assignment.assigned_to as string) === currentProfile?.id
-  const canAddTasks = isManager || isAssignedAM
+  const canAddTasks = isManager || isAssignedAM || isExecutive
 
   const assignedToName = (assignment.assigned_to_profile as { full_name?: string } | null)?.full_name
   const managerName = (assignment.manager as { full_name?: string })?.full_name

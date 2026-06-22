@@ -4,6 +4,7 @@ import { useParams, useRouter } from 'next/navigation'
 import AppShell from '@/components/AppShell'
 import { supabase } from '@/lib/supabase'
 import { logAction } from '@/lib/auth'
+import type { Profile } from '@/lib/supabase'
 
 export default function TaskDetailPage() {
   const { id } = useParams()
@@ -12,16 +13,26 @@ export default function TaskDetailPage() {
   const [subtasks, setSubtasks] = useState<{ id: string; title: string; completed: boolean }[]>([])
   const [newSubtask, setNewSubtask] = useState('')
   const [userId, setUserId] = useState('')
+  const [profile, setProfile] = useState<Profile | null>(null)
   const [loading, setLoading] = useState(true)
+  const [remark, setRemark] = useState('')
+  const [savingRemark, setSavingRemark] = useState(false)
+  const [remarkSaved, setRemarkSaved] = useState(false)
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data: { user } }) => { if (user) setUserId(user.id) })
     async function load() {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (user) {
+        setUserId(user.id)
+        const { data: p } = await supabase.from('profiles').select('*').eq('id', user.id).single()
+        setProfile(p)
+      }
       const [{ data: t }, { data: s }] = await Promise.all([
         supabase.from('tasks').select('*, assignee:profiles(full_name), assignment:assignments(id, title)').eq('id', id).single(),
         supabase.from('subtasks').select('*').eq('task_id', id).order('created_at'),
       ])
       setTask(t)
+      setRemark((t?.remarks as string) ?? '')
       setSubtasks(s ?? [])
       setLoading(false)
     }
@@ -32,6 +43,16 @@ export default function TaskDetailPage() {
     await supabase.from('tasks').update({ status }).eq('id', id as string)
     setTask(prev => prev ? { ...prev, status } : prev)
     await logAction(userId, 'UPDATE_STATUS', 'task', id as string, { status })
+  }
+
+  async function saveRemark() {
+    setSavingRemark(true)
+    await supabase.from('tasks').update({ remarks: remark }).eq('id', id as string)
+    setTask(prev => prev ? { ...prev, remarks: remark } : prev)
+    await logAction(userId, 'UPDATE', 'task', id as string, { remarks: remark })
+    setSavingRemark(false)
+    setRemarkSaved(true)
+    setTimeout(() => setRemarkSaved(false), 2000)
   }
 
   async function addSubtask() {
@@ -49,6 +70,11 @@ export default function TaskDetailPage() {
   if (loading) return <AppShell><div className="py-12 text-center text-gray-400">Loading...</div></AppShell>
   if (!task) return <AppShell><div className="py-12 text-center text-gray-400">Task not found</div></AppShell>
 
+  const isAssignee = task.assigned_to === userId
+  const isManager = profile?.role === 'manager'
+  const isAM = profile?.role === 'assistant_manager'
+  const canEdit = isAssignee || isManager || isAM
+
   const statusColors: Record<string, string> = {
     not_started: 'bg-gray-100 text-gray-800',
     in_progress: 'bg-blue-100 text-blue-800',
@@ -63,6 +89,7 @@ export default function TaskDetailPage() {
           ← Back
         </button>
 
+        {/* Task Header */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 mb-6">
           <div className="flex items-start justify-between mb-4">
             <div>
@@ -71,16 +98,22 @@ export default function TaskDetailPage() {
                 {(task.assignment as { title?: string })?.title ?? ''}
               </p>
             </div>
-            <select
-              value={task.status as string}
-              onChange={e => updateStatus(e.target.value)}
-              className={`text-sm font-medium px-3 py-1.5 rounded-full border-0 cursor-pointer ${statusColors[task.status as string] ?? 'bg-gray-100'}`}
-            >
-              <option value="not_started">Not Started</option>
-              <option value="in_progress">In Progress</option>
-              <option value="completed">Completed</option>
-              <option value="overdue">Overdue</option>
-            </select>
+            {canEdit ? (
+              <select
+                value={task.status as string}
+                onChange={e => updateStatus(e.target.value)}
+                className={`text-sm font-medium px-3 py-1.5 rounded-full border-0 cursor-pointer ${statusColors[task.status as string] ?? 'bg-gray-100'}`}
+              >
+                <option value="not_started">Not Started</option>
+                <option value="in_progress">In Progress</option>
+                <option value="completed">Completed</option>
+                <option value="overdue">Overdue</option>
+              </select>
+            ) : (
+              <span className={`text-sm font-medium px-3 py-1.5 rounded-full ${statusColors[task.status as string] ?? 'bg-gray-100'}`}>
+                {(task.status as string).replace(/_/g, ' ')}
+              </span>
+            )}
           </div>
 
           <div className="grid grid-cols-3 gap-4 text-sm">
@@ -105,6 +138,35 @@ export default function TaskDetailPage() {
           )}
         </div>
 
+        {/* Remarks */}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 mb-6">
+          <h3 className="font-semibold text-gray-900 mb-3">Remarks / Work Notes</h3>
+          {canEdit ? (
+            <>
+              <textarea
+                value={remark}
+                onChange={e => setRemark(e.target.value)}
+                rows={4}
+                placeholder="Add your work notes, findings, or remarks here..."
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+              />
+              <div className="flex items-center gap-3 mt-2">
+                <button
+                  onClick={saveRemark}
+                  disabled={savingRemark}
+                  className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {savingRemark ? 'Saving...' : 'Save Remarks'}
+                </button>
+                {remarkSaved && <span className="text-green-600 text-sm">✓ Saved</span>}
+              </div>
+            </>
+          ) : (
+            <p className="text-sm text-gray-600">{(task.remarks as string) || <span className="text-gray-400">No remarks added yet.</span>}</p>
+          )}
+        </div>
+
+        {/* Subtasks */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
           <h3 className="font-semibold text-gray-900 mb-4">
             Subtasks ({subtasks.filter(s => s.completed).length}/{subtasks.length})
@@ -116,22 +178,26 @@ export default function TaskDetailPage() {
                   type="checkbox"
                   checked={s.completed}
                   onChange={e => toggleSubtask(s.id, e.target.checked)}
+                  disabled={!canEdit}
                   className="w-4 h-4 text-blue-600 rounded"
                 />
                 <span className={`text-sm ${s.completed ? 'line-through text-gray-400' : 'text-gray-700'}`}>{s.title}</span>
               </label>
             ))}
+            {subtasks.length === 0 && <p className="text-sm text-gray-400">No subtasks yet.</p>}
           </div>
-          <div className="flex gap-2">
-            <input
-              value={newSubtask}
-              onChange={e => setNewSubtask(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && addSubtask()}
-              placeholder="Add subtask..."
-              className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-            <button onClick={addSubtask} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700">Add</button>
-          </div>
+          {canEdit && (
+            <div className="flex gap-2">
+              <input
+                value={newSubtask}
+                onChange={e => setNewSubtask(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && addSubtask()}
+                placeholder="Add subtask..."
+                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <button onClick={addSubtask} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700">Add</button>
+            </div>
+          )}
         </div>
       </div>
     </AppShell>
