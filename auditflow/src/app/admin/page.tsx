@@ -27,7 +27,7 @@ export default function AdminPage() {
   async function loadRequests() {
     const { data } = await supabase
       .from('profile_change_requests')
-      .select('*, user:profiles(full_name, email, avatar_url)')
+      .select('*, user:profiles!profile_change_requests_user_id_fkey(full_name, email, avatar_url)')
       .eq('status', 'pending')
       .order('created_at', { ascending: true })
     setRequests(data ?? [])
