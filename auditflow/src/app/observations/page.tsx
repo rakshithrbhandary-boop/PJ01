@@ -41,7 +41,7 @@ export default function ObservationsPage() {
 
   useEffect(() => {
     let q = supabase.from('observations')
-      .select('*, raiser:profiles(full_name), assignment:assignments(title)')
+      .select('*, raiser:profiles(full_name), assignment:assignments(title), commenter:profiles!observations_manager_input_by_fkey(full_name, role)')
       .order('created_at', { ascending: false })
     if (riskFilter) q = q.eq('risk_level', riskFilter)
     q.then(({ data }) => { setObs(data ?? []); setLoading(false) })
@@ -62,9 +62,21 @@ export default function ObservationsPage() {
   }
 
   async function saveManagerInput(obsId: string) {
+    if (!profile) return
     setSavingInput(obsId)
-    await supabase.from('observations').update({ manager_input: managerInputs[obsId] }).eq('id', obsId)
-    setObs(prev => prev.map(o => o.id === obsId ? { ...o, manager_input: managerInputs[obsId] } : o))
+    const now = new Date().toISOString()
+    await supabase.from('observations').update({
+      manager_input: managerInputs[obsId],
+      manager_input_by: profile.id,
+      manager_input_at: now,
+    }).eq('id', obsId)
+    setObs(prev => prev.map(o => o.id === obsId ? {
+      ...o,
+      manager_input: managerInputs[obsId],
+      manager_input_by: profile.id,
+      manager_input_at: now,
+      commenter: { full_name: profile.full_name, role: profile.role },
+    } : o))
     setSavingInput(null)
     setSavedInput(obsId)
     setTimeout(() => setSavedInput(null), 2000)
@@ -76,6 +88,8 @@ export default function ObservationsPage() {
   }
 
   const isManager = profile?.role === 'manager'
+  const isAM = profile?.role === 'assistant_manager'
+  const canComment = isManager || isAM
 
   return (
     <AppShell>
@@ -160,8 +174,8 @@ export default function ObservationsPage() {
                           <p className="text-sm text-gray-700">{o.description as string}</p>
                         </div>
 
-                        {/* Status + Risk controls for manager */}
-                        {isManager && (
+                        {/* Status + Risk controls for manager/AM */}
+                        {canComment && (
                           <div className="grid grid-cols-2 gap-4">
                             <div>
                               <p className="text-xs font-semibold text-gray-500 uppercase mb-1">Update Status</p>
@@ -186,13 +200,32 @@ export default function ObservationsPage() {
                           </div>
                         )}
 
-                        {/* Manager input section */}
+                        {/* Comments section */}
                         <div>
-                          <p className="text-xs font-semibold text-gray-500 uppercase mb-1">
-                            {isManager ? 'Manager Comments / Action Required' : 'Manager Comments'}
+                          <p className="text-xs font-semibold text-gray-500 uppercase mb-2">
+                            Comments / Action Required
                           </p>
-                          {isManager ? (
+                          {canComment ? (
                             <>
+                              {/* Show existing comment with attribution */}
+                              {(o.manager_input as string) && (
+                                <div className="mb-3 p-3 bg-white border border-gray-200 rounded-lg">
+                                  <div className="flex items-center gap-2 mb-1">
+                                    <span className="text-xs font-semibold text-gray-800">
+                                      {(o.commenter as { full_name?: string; role?: string })?.full_name ?? 'Unknown'}
+                                    </span>
+                                    <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 capitalize">
+                                      {((o.commenter as { role?: string })?.role ?? '').replace('_', ' ')}
+                                    </span>
+                                    {(o.manager_input_at as string) && (
+                                      <span className="text-xs text-gray-400">
+                                        · {new Date(o.manager_input_at as string).toLocaleString()}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <p className="text-sm text-gray-700">{o.manager_input as string}</p>
+                                </div>
+                              )}
                               <textarea
                                 value={managerInputs[o.id as string] ?? ''}
                                 onChange={e => setManagerInputs(prev => ({ ...prev, [o.id as string]: e.target.value }))}
@@ -207,13 +240,32 @@ export default function ObservationsPage() {
                                   disabled={savingInput === (o.id as string)}
                                   className="bg-blue-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
                                 >
-                                  {savingInput === (o.id as string) ? 'Saving...' : 'Save'}
+                                  {savingInput === (o.id as string) ? 'Saving...' : 'Save Comment'}
                                 </button>
                                 {savedInput === (o.id as string) && <span className="text-green-600 text-sm">✓ Saved</span>}
                               </div>
                             </>
                           ) : (
-                            <p className="text-sm text-gray-600">{(o.manager_input as string) || <span className="text-gray-400">No comments yet.</span>}</p>
+                            (o.manager_input as string) ? (
+                              <div className="p-3 bg-white border border-gray-200 rounded-lg">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <span className="text-xs font-semibold text-gray-800">
+                                    {(o.commenter as { full_name?: string })?.full_name ?? 'Management'}
+                                  </span>
+                                  <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 capitalize">
+                                    {((o.commenter as { role?: string })?.role ?? '').replace('_', ' ')}
+                                  </span>
+                                  {(o.manager_input_at as string) && (
+                                    <span className="text-xs text-gray-400">
+                                      · {new Date(o.manager_input_at as string).toLocaleString()}
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-sm text-gray-700">{o.manager_input as string}</p>
+                              </div>
+                            ) : (
+                              <p className="text-sm text-gray-400">No comments yet.</p>
+                            )
                           )}
                         </div>
 
@@ -221,7 +273,7 @@ export default function ObservationsPage() {
                         {(o.manager_input as string) && (
                           <div className="border-t border-gray-200 pt-4">
                             <p className="text-xs font-semibold text-gray-500 uppercase mb-2">Executive Acknowledgement</p>
-                            {!isManager ? (
+                            {!canComment ? (
                               <div className="flex items-center gap-3" onClick={e => e.stopPropagation()}>
                                 <select
                                   value={execResponses[o.id as string] ?? ''}
