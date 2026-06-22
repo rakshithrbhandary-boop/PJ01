@@ -41,10 +41,21 @@ export default function ObservationsPage() {
 
   useEffect(() => {
     let q = supabase.from('observations')
-      .select('*, raiser:profiles(full_name), assignment:assignments(title)')
+      .select('*, raiser:profiles(full_name)')
       .order('created_at', { ascending: false })
     if (riskFilter) q = q.eq('risk_level', riskFilter)
-    q.then(({ data }) => { setObs(data ?? []); setLoading(false) })
+    q.then(async ({ data: obsData }) => {
+      if (!obsData) { setLoading(false); return }
+      // Fetch assignment titles separately to avoid RLS join filtering
+      const assignmentIds = [...new Set(obsData.map(o => o.assignment_id).filter(Boolean))]
+      let assignmentMap: Record<string, string> = {}
+      if (assignmentIds.length > 0) {
+        const { data: aData } = await supabase.from('assignments').select('id, title').in('id', assignmentIds as string[])
+        assignmentMap = Object.fromEntries((aData ?? []).map(a => [a.id, a.title]))
+      }
+      setObs(obsData.map(o => ({ ...o, _assignmentTitle: assignmentMap[o.assignment_id as string] ?? null })))
+      setLoading(false)
+    })
   }, [riskFilter])
 
   function toggle(id: string, currentInput: string, currentExecResponse: string) {
@@ -152,7 +163,7 @@ export default function ObservationsPage() {
                         <p className="font-medium text-gray-900">{o.title as string}</p>
                         <p className="text-xs text-gray-400 truncate max-w-xs">{o.description as string}</p>
                       </div>
-                      <div className="text-sm text-gray-500">{(o.assignment as { title?: string })?.title ?? '—'}</div>
+                      <div className="text-sm text-gray-500">{(o._assignmentTitle as string) ?? '—'}</div>
                       <div>
                         <span className={`text-xs font-medium px-2.5 py-1 rounded-full capitalize ${RISK_COLORS[o.risk_level as string] ?? ''}`}>
                           {o.risk_level as string}
