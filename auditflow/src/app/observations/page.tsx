@@ -114,7 +114,14 @@ export default function ObservationsPage() {
                       onClick={() => toggle(o.id as string, o.manager_input as string)}
                     >
                       <div className="flex items-center justify-center">
-                        <span className={`transition-transform duration-200 text-gray-400 text-sm ${isOpen ? 'rotate-90' : ''}`}>▶</span>
+                        <button className="w-6 h-6 flex items-center justify-center rounded hover:bg-gray-200 transition-colors text-gray-400">
+                          <svg
+                            className={`w-3.5 h-3.5 transition-transform duration-200 ${isOpen ? 'rotate-90' : ''}`}
+                            fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                          >
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                          </svg>
+                        </button>
                       </div>
                       <div>
                         <p className="font-medium text-gray-900">{o.title as string}</p>
