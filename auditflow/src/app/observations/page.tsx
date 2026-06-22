@@ -27,6 +27,8 @@ export default function ObservationsPage() {
   const [managerInputs, setManagerInputs] = useState<Record<string, string>>({})
   const [savingInput, setSavingInput] = useState<string | null>(null)
   const [savedInput, setSavedInput] = useState<string | null>(null)
+  const [execResponses, setExecResponses] = useState<Record<string, string>>({})
+  const [savingExec, setSavingExec] = useState<string | null>(null)
 
   useEffect(() => {
     supabase.auth.getUser().then(async ({ data: { user } }) => {
@@ -45,10 +47,18 @@ export default function ObservationsPage() {
     q.then(({ data }) => { setObs(data ?? []); setLoading(false) })
   }, [riskFilter])
 
-  function toggle(id: string, currentInput: string) {
+  function toggle(id: string, currentInput: string, currentExecResponse: string) {
     if (expanded === id) { setExpanded(null); return }
     setExpanded(id)
     setManagerInputs(prev => ({ ...prev, [id]: prev[id] ?? currentInput ?? '' }))
+    setExecResponses(prev => ({ ...prev, [id]: prev[id] ?? currentExecResponse ?? '' }))
+  }
+
+  async function saveExecResponse(obsId: string) {
+    setSavingExec(obsId)
+    await supabase.from('observations').update({ executive_response: execResponses[obsId] }).eq('id', obsId)
+    setObs(prev => prev.map(o => o.id === obsId ? { ...o, executive_response: execResponses[obsId] } : o))
+    setSavingExec(null)
   }
 
   async function saveManagerInput(obsId: string) {
@@ -111,7 +121,7 @@ export default function ObservationsPage() {
                     {/* Row */}
                     <div
                       className="grid grid-cols-[40px_1fr_180px_120px_110px_120px] px-4 py-4 items-center hover:bg-gray-50 cursor-pointer"
-                      onClick={() => toggle(o.id as string, o.manager_input as string)}
+                      onClick={() => toggle(o.id as string, o.manager_input as string, o.executive_response as string)}
                     >
                       <div className="flex items-center justify-center">
                         <button className="w-6 h-6 flex items-center justify-center rounded hover:bg-gray-200 transition-colors text-gray-400">
@@ -206,6 +216,56 @@ export default function ObservationsPage() {
                             <p className="text-sm text-gray-600">{(o.manager_input as string) || <span className="text-gray-400">No comments yet.</span>}</p>
                           )}
                         </div>
+
+                        {/* Executive acknowledgement */}
+                        {(o.manager_input as string) && (
+                          <div className="border-t border-gray-200 pt-4">
+                            <p className="text-xs font-semibold text-gray-500 uppercase mb-2">Executive Acknowledgement</p>
+                            {!isManager ? (
+                              <div className="flex items-center gap-3" onClick={e => e.stopPropagation()}>
+                                <select
+                                  value={execResponses[o.id as string] ?? ''}
+                                  onChange={async e => {
+                                    const val = e.target.value
+                                    setExecResponses(prev => ({ ...prev, [o.id as string]: val }))
+                                    setSavingExec(o.id as string)
+                                    await supabase.from('observations').update({ executive_response: val }).eq('id', o.id as string)
+                                    setObs(prev => prev.map(ob => ob.id === o.id ? { ...ob, executive_response: val } : ob))
+                                    setSavingExec(null)
+                                  }}
+                                  className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                >
+                                  <option value="">— Select response —</option>
+                                  <option value="acknowledged">✓ Acknowledged</option>
+                                  <option value="in_progress">⏳ Working on it</option>
+                                  <option value="clarification_needed">❓ Clarification Needed</option>
+                                  <option value="disagree">✗ Disagree</option>
+                                </select>
+                                {savingExec === (o.id as string) && <span className="text-gray-400 text-sm">Saving...</span>}
+                                {execResponses[o.id as string] && savingExec !== (o.id as string) && <span className="text-green-600 text-sm">✓ Saved</span>}
+                              </div>
+                            ) : (
+                              (() => {
+                                const resp = o.executive_response as string
+                                const labels: Record<string, string> = {
+                                  acknowledged: '✓ Acknowledged',
+                                  in_progress: '⏳ Working on it',
+                                  clarification_needed: '❓ Clarification Needed',
+                                  disagree: '✗ Disagree',
+                                }
+                                const colors: Record<string, string> = {
+                                  acknowledged: 'bg-green-100 text-green-800',
+                                  in_progress: 'bg-blue-100 text-blue-800',
+                                  clarification_needed: 'bg-yellow-100 text-yellow-800',
+                                  disagree: 'bg-red-100 text-red-800',
+                                }
+                                return resp
+                                  ? <span className={`text-xs font-medium px-3 py-1 rounded-full ${colors[resp] ?? 'bg-gray-100 text-gray-700'}`}>{labels[resp] ?? resp}</span>
+                                  : <span className="text-sm text-gray-400">No response yet</span>
+                              })()
+                            )}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
