@@ -7,7 +7,6 @@ import type { Profile } from '@/lib/supabase'
 const navItems = [
   { href: '/dashboard', label: 'Dashboard', icon: '📊' },
   { href: '/assignments', label: 'Assignments', icon: '📋' },
-  { href: '/tasks', label: 'Tasks', icon: '✅' },
   { href: '/observations', label: 'Observations', icon: '🔍' },
   { href: '/timesheets', label: 'Timesheets', icon: '⏱️' },
   { href: '/reports', label: 'Reports', icon: '📈' },
