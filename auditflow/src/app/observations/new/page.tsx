@@ -10,8 +10,10 @@ function NewObservationForm() {
   const searchParams = useSearchParams()
   const [userId, setUserId] = useState('')
   const [assignments, setAssignments] = useState<{ id: string; title: string }[]>([])
+  const [tasks, setTasks] = useState<{ id: string; title: string }[]>([])
   const [form, setForm] = useState({
     assignment_id: searchParams.get('assignment') ?? '',
+    task_id: '',
     title: '',
     description: '',
     risk_level: 'medium',
@@ -25,10 +27,16 @@ function NewObservationForm() {
     supabase.from('assignments').select('id, title').then(({ data }) => setAssignments(data ?? []))
   }, [])
 
+  useEffect(() => {
+    if (!form.assignment_id) { setTasks([]); return }
+    supabase.from('tasks').select('id, title').eq('assignment_id', form.assignment_id).then(({ data }) => setTasks(data ?? []))
+  }, [form.assignment_id])
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setSaving(true)
-    const { data, error: err } = await supabase.from('observations').insert({ ...form, raised_by: userId }).select().single()
+    const payload = { ...form, raised_by: userId, task_id: form.task_id || null }
+    const { data, error: err } = await supabase.from('observations').insert(payload).select().single()
     if (err) { setError(err.message); setSaving(false); return }
     await logAction(userId, 'CREATE', 'observation', data.id, { title: form.title, risk_level: form.risk_level })
     router.push('/observations')
@@ -41,12 +49,22 @@ function NewObservationForm() {
         <form onSubmit={handleSubmit} className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 space-y-5">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Assignment *</label>
-            <select required value={form.assignment_id} onChange={e => setForm({ ...form, assignment_id: e.target.value })}
+            <select required value={form.assignment_id} onChange={e => setForm({ ...form, assignment_id: e.target.value, task_id: '' })}
               className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
               <option value="">Select assignment</option>
               {assignments.map(a => <option key={a.id} value={a.id}>{a.title}</option>)}
             </select>
           </div>
+          {form.assignment_id && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Task (optional)</label>
+              <select value={form.task_id} onChange={e => setForm({ ...form, task_id: e.target.value })}
+                className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <option value="">— Select a task —</option>
+                {tasks.map(t => <option key={t.id} value={t.id}>{t.title}</option>)}
+              </select>
+            </div>
+          )}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Observation Title *</label>
             <input required value={form.title} onChange={e => setForm({ ...form, title: e.target.value })}
