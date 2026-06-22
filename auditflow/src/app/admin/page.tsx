@@ -16,6 +16,10 @@ export default function AdminPage() {
   const [loadingReqs, setLoadingReqs] = useState(true)
   const [actioning, setActioning] = useState<string | null>(null)
 
+  // Rejection modal state
+  const [rejectTarget, setRejectTarget] = useState<{ reqId: string; userId: string; req: Record<string, unknown> } | null>(null)
+  const [rejectReason, setRejectReason] = useState('')
+
   useEffect(() => {
     supabase.from('profiles').select('*').order('created_at').then(({ data }) => {
       setUsers((data as Profile[]) ?? [])
@@ -54,27 +58,42 @@ export default function AdminPage() {
     setTimeout(() => setMessage(null), 3000)
   }
 
-  async function reviewRequest(reqId: string, userId: string, approve: boolean, req: Record<string, unknown>) {
+  async function approveRequest(reqId: string, userId: string, req: Record<string, unknown>) {
     setActioning(reqId)
     const { data: { user } } = await supabase.auth.getUser()
-
-    if (approve) {
-      const updates: Record<string, unknown> = {}
-      if (req.requested_name) updates.full_name = req.requested_name
-      if (req.requested_avatar_url) updates.avatar_url = req.requested_avatar_url
-      if (Object.keys(updates).length > 0) {
-        await supabase.from('profiles').update(updates).eq('id', userId)
-      }
+    const updates: Record<string, unknown> = {}
+    if (req.requested_name) updates.full_name = req.requested_name
+    if (req.requested_avatar_url) updates.avatar_url = req.requested_avatar_url
+    if (Object.keys(updates).length > 0) {
+      await supabase.from('profiles').update(updates).eq('id', userId)
     }
-
     await supabase.from('profile_change_requests').update({
-      status: approve ? 'approved' : 'rejected',
+      status: 'approved',
       reviewed_at: new Date().toISOString(),
       reviewed_by: user?.id,
+      rejection_reason: null,
     }).eq('id', reqId)
-
     setRequests(prev => prev.filter(r => r.id !== reqId))
     setActioning(null)
+  }
+
+  async function submitRejection() {
+    if (!rejectTarget || !rejectReason.trim()) return
+    const { reqId, userId, req } = rejectTarget
+    setActioning(reqId)
+    const { data: { user } } = await supabase.auth.getUser()
+    await supabase.from('profile_change_requests').update({
+      status: 'rejected',
+      reviewed_at: new Date().toISOString(),
+      reviewed_by: user?.id,
+      rejection_reason: rejectReason.trim(),
+    }).eq('id', reqId)
+    setRequests(prev => prev.filter(r => r.id !== reqId))
+    setRejectTarget(null)
+    setRejectReason('')
+    setActioning(null)
+    // suppress unused warning
+    void userId; void req
   }
 
   const pendingCount = requests.length
@@ -83,7 +102,7 @@ export default function AdminPage() {
     <AppShell>
       <div>
         <h1 className="text-2xl font-bold text-gray-900 mb-2">Administration</h1>
-        <p className="text-gray-500 mb-6">Manage users, roles, and pending requests</p>
+        <p className="text-gray-500 mb-6">Manage users, roles, and approval requests</p>
 
         {/* Tabs */}
         <div className="flex gap-1 mb-6 bg-gray-100 p-1 rounded-lg w-fit">
@@ -97,7 +116,7 @@ export default function AdminPage() {
             onClick={() => setTab('requests')}
             className={`px-4 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2 ${tab === 'requests' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
           >
-            Profile Requests
+            Approval Requests
             {pendingCount > 0 && (
               <span className="bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">{pendingCount}</span>
             )}
@@ -161,7 +180,6 @@ export default function AdminPage() {
                 </table>
               )}
             </div>
-
             <div className="mt-8 bg-blue-50 rounded-xl p-6 border border-blue-100">
               <h3 className="font-semibold text-blue-900 mb-2">Add New Users</h3>
               <p className="text-blue-700 text-sm">
@@ -178,7 +196,7 @@ export default function AdminPage() {
               <div className="py-12 text-center text-gray-400">Loading...</div>
             ) : requests.length === 0 ? (
               <div className="bg-white rounded-xl border border-gray-100 shadow-sm py-12 text-center text-gray-400">
-                No pending profile change requests.
+                No pending approval requests.
               </div>
             ) : (
               <div className="space-y-4">
@@ -189,9 +207,9 @@ export default function AdminPage() {
                       <div className="flex items-start justify-between">
                         <div className="flex items-center gap-4">
                           <div className="w-12 h-12 rounded-full bg-blue-500 flex items-center justify-center text-white font-bold overflow-hidden">
-                            {user.avatar_url ? (
-                              <img src={user.avatar_url} alt="" className="w-full h-full object-cover" />
-                            ) : user.full_name?.[0]?.toUpperCase()}
+                            {user.avatar_url
+                              ? <img src={user.avatar_url} alt="" className="w-full h-full object-cover" />
+                              : user.full_name?.[0]?.toUpperCase()}
                           </div>
                           <div>
                             <p className="font-semibold text-gray-900">{user.full_name}</p>
@@ -228,14 +246,14 @@ export default function AdminPage() {
 
                       <div className="mt-4 flex gap-3">
                         <button
-                          onClick={() => reviewRequest(req.id as string, req.user_id as string, true, req)}
+                          onClick={() => approveRequest(req.id as string, req.user_id as string, req)}
                           disabled={actioning === req.id}
                           className="bg-green-600 text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-green-700 disabled:opacity-50"
                         >
                           {actioning === req.id ? 'Processing...' : '✓ Approve'}
                         </button>
                         <button
-                          onClick={() => reviewRequest(req.id as string, req.user_id as string, false, req)}
+                          onClick={() => { setRejectTarget({ reqId: req.id as string, userId: req.user_id as string, req }); setRejectReason('') }}
                           disabled={actioning === req.id}
                           className="bg-white text-red-600 border border-red-200 px-5 py-2 rounded-lg text-sm font-medium hover:bg-red-50 disabled:opacity-50"
                         >
@@ -247,6 +265,39 @@ export default function AdminPage() {
                 })}
               </div>
             )}
+          </div>
+        )}
+
+        {/* Rejection Reason Modal */}
+        {rejectTarget && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
+              <h3 className="text-lg font-semibold text-gray-900 mb-1">Reject Request</h3>
+              <p className="text-sm text-gray-500 mb-4">Please provide a reason — the requester will be notified.</p>
+              <textarea
+                value={rejectReason}
+                onChange={e => setRejectReason(e.target.value)}
+                rows={3}
+                placeholder="e.g. Name does not match company records..."
+                className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 text-sm"
+                autoFocus
+              />
+              <div className="flex gap-3 mt-4">
+                <button
+                  onClick={submitRejection}
+                  disabled={!rejectReason.trim() || !!actioning}
+                  className="flex-1 bg-red-600 text-white py-2.5 rounded-lg text-sm font-medium hover:bg-red-700 disabled:opacity-50"
+                >
+                  {actioning ? 'Rejecting...' : 'Confirm Rejection'}
+                </button>
+                <button
+                  onClick={() => { setRejectTarget(null); setRejectReason('') }}
+                  className="flex-1 bg-gray-100 text-gray-700 py-2.5 rounded-lg text-sm font-medium hover:bg-gray-200"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </div>

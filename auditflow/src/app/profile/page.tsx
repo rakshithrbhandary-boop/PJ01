@@ -25,7 +25,7 @@ export default function ProfilePage() {
         .from('profile_change_requests')
         .select('*')
         .eq('user_id', user.id)
-        .eq('status', 'pending')
+        .in('status', ['pending', 'rejected'])
         .order('created_at', { ascending: false })
         .limit(1)
         .single()
@@ -98,9 +98,9 @@ export default function ProfilePage() {
         <h1 className="text-2xl font-bold text-gray-900 mb-1">My Profile</h1>
         <p className="text-gray-500 mb-8">Changes require manager approval before taking effect</p>
 
-        {pendingRequest && (
+        {pendingRequest && (pendingRequest.status as string) === 'pending' && (
           <div className="mb-6 bg-yellow-50 border border-yellow-200 rounded-xl p-4 flex items-start gap-3">
-            <span className="text-yellow-500 text-lg">⏳</span>
+            <span className="text-lg">⏳</span>
             <div>
               <p className="font-medium text-yellow-800 text-sm">Change request pending approval</p>
               <p className="text-yellow-700 text-xs mt-0.5">
@@ -108,6 +108,18 @@ export default function ProfilePage() {
                 {(pendingRequest.requested_name as string | null) && (pendingRequest.requested_avatar_url as string | null) && ' · '}
                 {(pendingRequest.requested_avatar_url as string | null) && 'New profile picture uploaded'}
               </p>
+            </div>
+          </div>
+        )}
+        {pendingRequest && (pendingRequest.status as string) === 'rejected' && (
+          <div className="mb-6 bg-red-50 border border-red-200 rounded-xl p-4 flex items-start gap-3">
+            <span className="text-lg">❌</span>
+            <div className="flex-1">
+              <p className="font-medium text-red-800 text-sm">Your change request was rejected</p>
+              {(pendingRequest.rejection_reason as string | null) && (
+                <p className="text-red-700 text-xs mt-1">Reason: <strong>{pendingRequest.rejection_reason as string}</strong></p>
+              )}
+              <p className="text-red-600 text-xs mt-1">You may submit a new request below.</p>
             </div>
           </div>
         )}
@@ -162,10 +174,10 @@ export default function ProfilePage() {
 
             <button
               type="submit"
-              disabled={submitting || !!pendingRequest}
+              disabled={submitting || (!!pendingRequest && (pendingRequest.status as string) === 'pending')}
               className="w-full bg-blue-600 text-white py-2.5 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50"
             >
-              {submitting ? 'Submitting...' : pendingRequest ? 'Request Pending Approval' : 'Submit for Approval'}
+              {submitting ? 'Submitting...' : (pendingRequest && (pendingRequest.status as string) === 'pending') ? 'Request Pending Approval' : 'Submit for Approval'}
             </button>
           </form>
         </div>
