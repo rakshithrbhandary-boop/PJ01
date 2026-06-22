@@ -53,7 +53,7 @@ export default function AssignmentsPage() {
       }
       const { data } = await supabase
         .from('assignments')
-        .select('*, manager:profiles(full_name)')
+        .select('*, manager:profiles!assignments_manager_id_fkey(full_name)')
         .order('created_at', { ascending: false })
       setAssignments(data ?? [])
       setLoading(false)
