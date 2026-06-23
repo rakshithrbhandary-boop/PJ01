@@ -177,17 +177,36 @@ export default function AssignmentDetailPage() {
 
         {/* Info Cards */}
         <div className="grid grid-cols-4 gap-4 mb-6">
-          {[
-            { label: 'Type', value: (assignment.type as string).replace(/_/g, ' ') },
-            { label: 'Manager', value: managerName ?? '—' },
-            { label: 'Assigned To (AM)', value: assignedToName ?? 'Unassigned' },
-            { label: 'Due Date', value: assignment.due_date as string },
-          ].map(item => (
-            <div key={item.label} className="bg-white rounded-xl p-4 border border-gray-100 shadow-sm">
-              <p className="text-xs text-gray-500 uppercase tracking-wider">{item.label}</p>
-              <p className="font-medium text-gray-900 mt-1 capitalize">{item.value}</p>
+          <div className="bg-white rounded-xl p-4 border border-gray-100 shadow-sm">
+            <p className="text-xs text-gray-500 uppercase tracking-wider">Type</p>
+            <p className="font-medium text-gray-900 mt-1 capitalize">{(assignment.type as string).replace(/_/g, ' ')}</p>
+          </div>
+          <div className="bg-white rounded-xl p-4 border border-gray-100 shadow-sm">
+            <p className="text-xs text-gray-500 uppercase tracking-wider">Manager</p>
+            <p className="font-medium text-gray-900 mt-1">{managerName ?? '—'}</p>
+          </div>
+          <div className="bg-white rounded-xl p-4 border border-gray-100 shadow-sm">
+            <p className="text-xs text-gray-500 uppercase tracking-wider">Currently Handled By (AM)</p>
+            <div className="flex items-center gap-2 mt-1">
+              <p className="font-medium text-gray-900">{assignedToName ?? 'Unassigned'}</p>
+              {handoverHistory.length > 0 && (
+                <span className="text-xs px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-700 font-medium">Handed Over</span>
+              )}
             </div>
-          ))}
+            {handoverHistory.length > 0 && (() => {
+              const last = handoverHistory[handoverHistory.length - 1]
+              return (
+                <p className="text-xs text-gray-400 mt-0.5">
+                  from {last.from_am_name as string}
+                  {(last.return_date as string) ? ` · returns ${last.return_date as string}` : ''}
+                </p>
+              )
+            })()}
+          </div>
+          <div className="bg-white rounded-xl p-4 border border-gray-100 shadow-sm">
+            <p className="text-xs text-gray-500 uppercase tracking-wider">Due Date</p>
+            <p className="font-medium text-gray-900 mt-1">{(assignment.due_date as string) || 'Always Active'}</p>
+          </div>
         </div>
 
         {/* Assignment Flow — Manager Overview */}
