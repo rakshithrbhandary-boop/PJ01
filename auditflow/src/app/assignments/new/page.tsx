@@ -25,6 +25,8 @@ type Scope = { name: string; verification_frequency: string; reporting_frequency
 export default function NewAssignmentPage() {
   const router = useRouter()
   const [userId, setUserId] = useState('')
+  const [userRole, setUserRole] = useState('')
+  const [managerId, setManagerId] = useState('')
   const [assistantManagers, setAssistantManagers] = useState<{ id: string; full_name: string }[]>([])
   const [form, setForm] = useState({
     title: '', type: 'internal_audit', status: 'planning',
@@ -38,9 +40,24 @@ export default function NewAssignmentPage() {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data: { user } }) => { if (user) setUserId(user.id) })
-    supabase.from('profiles').select('id, full_name').eq('role', 'assistant_manager')
-      .then(({ data }) => setAssistantManagers(data ?? []))
+    async function load() {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+      setUserId(user.id)
+      const { data: p } = await supabase.from('profiles').select('role').eq('id', user.id).single()
+      if (p) {
+        setUserRole(p.role)
+        if (p.role === 'assistant_manager') {
+          // Default assigned_to = self; find supervising manager
+          setForm(f => ({ ...f, assigned_to: user.id }))
+          const { data: mgr } = await supabase.from('profiles').select('id').eq('role', 'manager').limit(1).single()
+          if (mgr) setManagerId(mgr.id)
+        }
+      }
+      const { data: ams } = await supabase.from('profiles').select('id, full_name').eq('role', 'assistant_manager')
+      setAssistantManagers(ams ?? [])
+    }
+    load()
   }, [])
 
   function handleTypeChange(v: string) {
@@ -65,7 +82,7 @@ export default function NewAssignmentPage() {
     setSaving(true)
     const payload = {
       ...form,
-      manager_id: userId,
+      manager_id: userRole === 'assistant_manager' ? managerId : userId,
       assigned_to: form.assigned_to || null,
       daily_audit_scopes: isDailyAudit ? scopes.filter(s => s.name.trim()) : null,
       always_active: alwaysActive,

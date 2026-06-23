@@ -47,6 +47,13 @@ export default function AssignmentDetailPage() {
   const [taskForm, setTaskForm] = useState({ title: '', assigned_to: '', priority: 'medium', due_date: '' })
   const [savingTask, setSavingTask] = useState(false)
 
+  // Handover
+  const [showHandover, setShowHandover] = useState(false)
+  const [otherAMs, setOtherAMs] = useState<{ id: string; full_name: string }[]>([])
+  const [handoverForm, setHandoverForm] = useState({ to_am: '', type: 'temporary', return_date: '', reason: '' })
+  const [savingHandover, setSavingHandover] = useState(false)
+  const [handoverHistory, setHandoverHistory] = useState<Record<string, unknown>[]>([])
+
   useEffect(() => {
     async function load() {
       const { data: { user } } = await supabase.auth.getUser()
@@ -54,16 +61,20 @@ export default function AssignmentDetailPage() {
         const { data: p } = await supabase.from('profiles').select('*').eq('id', user.id).single()
         setCurrentProfile(p)
       }
-      const [{ data: a }, { data: t }, { data: o }, { data: ex }] = await Promise.all([
+      const [{ data: a }, { data: t }, { data: o }, { data: ex }, { data: ams }, { data: hist }] = await Promise.all([
         supabase.from('assignments').select('*, manager:profiles!assignments_manager_id_fkey(full_name), assigned_to_profile:profiles!assignments_assigned_to_fkey(full_name)').eq('id', id).single(),
         supabase.from('tasks').select('*, assignee:profiles(full_name)').eq('assignment_id', id).order('created_at'),
         supabase.from('observations').select('*, raiser:profiles(full_name)').eq('assignment_id', id).order('created_at', { ascending: false }),
         supabase.from('profiles').select('id, full_name').eq('role', 'executive'),
+        supabase.from('profiles').select('id, full_name').eq('role', 'assistant_manager'),
+        supabase.from('assignment_handovers').select('*').eq('assignment_id', id).order('created_at'),
       ])
       setAssignment(a)
       setTasks(t ?? [])
       setObservations(o ?? [])
       setExecutives(ex ?? [])
+      setOtherAMs((ams ?? []))
+      setHandoverHistory(hist ?? [])
       setLoading(false)
     }
     load()
@@ -84,6 +95,30 @@ export default function AssignmentDetailPage() {
     setTaskForm({ title: '', assigned_to: '', priority: 'medium', due_date: '' })
     setShowTaskForm(false)
     setSavingTask(false)
+  }
+
+  async function confirmHandover() {
+    if (!handoverForm.to_am || !currentProfile) return
+    setSavingHandover(true)
+    const toAM = otherAMs.find(a => a.id === handoverForm.to_am)
+    const record = {
+      assignment_id: id as string,
+      from_am_id: currentProfile.id,
+      from_am_name: currentProfile.full_name,
+      to_am_id: handoverForm.to_am,
+      to_am_name: toAM?.full_name ?? '',
+      handover_type: handoverForm.type,
+      return_date: handoverForm.type === 'temporary' && handoverForm.return_date ? handoverForm.return_date : null,
+      reason: handoverForm.reason,
+    }
+    const { data: newHistory } = await supabase.from('assignment_handovers').insert(record).select().single()
+    // Update assignment's assigned_to
+    await supabase.from('assignments').update({ assigned_to: handoverForm.to_am }).eq('id', id as string)
+    setAssignment(prev => prev ? { ...prev, assigned_to: handoverForm.to_am } : prev)
+    if (newHistory) setHandoverHistory(prev => [...prev, newHistory])
+    setShowHandover(false)
+    setHandoverForm({ to_am: '', type: 'temporary', return_date: '', reason: '' })
+    setSavingHandover(false)
   }
 
   if (loading) return <AppShell><div className="py-12 text-center text-gray-400">Loading...</div></AppShell>
@@ -127,6 +162,11 @@ export default function AssignmentDetailPage() {
             <span className={`text-sm font-medium px-3 py-1.5 rounded-full capitalize ${STATUS_COLORS[assignment.status as string] ?? 'bg-gray-100'}`}>
               {(assignment.status as string).replace(/_/g, ' ')}
             </span>
+            {isAssignedAM && (
+              <button onClick={() => setShowHandover(true)} className="text-sm text-orange-600 border border-orange-200 px-3 py-1.5 rounded-lg hover:bg-orange-50">
+                Handover
+              </button>
+            )}
             {isManager && (
               <Link href={`/assignments/${id}/edit`} className="text-sm text-blue-600 border border-blue-200 px-3 py-1.5 rounded-lg hover:bg-blue-50">
                 Edit
@@ -302,7 +342,87 @@ export default function AssignmentDetailPage() {
             )}
           </div>
         </div>
+
+        {/* Handover History */}
+        {handoverHistory.length > 0 && (
+          <div className="mt-6 bg-white rounded-xl border border-gray-100 shadow-sm">
+            <div className="px-6 py-4 border-b border-gray-100">
+              <h3 className="font-semibold text-gray-900">Handover History</h3>
+            </div>
+            <div className="divide-y divide-gray-50">
+              {handoverHistory.map(h => (
+                <div key={h.id as string} className="px-6 py-3 flex items-center gap-4 text-sm">
+                  <span className="font-medium text-gray-800">{h.from_am_name as string}</span>
+                  <span className="text-gray-400">→</span>
+                  <span className="font-medium text-gray-800">{h.to_am_name as string}</span>
+                  <span className={`text-xs px-2 py-0.5 rounded-full capitalize ${(h.handover_type as string) === 'permanent' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'}`}>
+                    {h.handover_type as string}
+                  </span>
+                  {(h.return_date as string) && <span className="text-gray-500">Returns {h.return_date as string}</span>}
+                  {(h.reason as string) && <span className="text-gray-400 italic">"{h.reason as string}"</span>}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* Handover Modal */}
+      {showHandover && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4 p-6">
+            <h2 className="text-lg font-bold text-gray-900 mb-4">Handover Assignment</h2>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Hand over to *</label>
+                <select value={handoverForm.to_am} onChange={e => setHandoverForm({ ...handoverForm, to_am: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                  <option value="">— Select Assistant Manager —</option>
+                  {otherAMs.filter(a => a.id !== currentProfile?.id).map(a => (
+                    <option key={a.id} value={a.id}>{a.full_name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Handover Type</label>
+                <div className="flex gap-4">
+                  {['temporary', 'permanent'].map(t => (
+                    <label key={t} className="flex items-center gap-2 cursor-pointer text-sm capitalize">
+                      <input type="radio" name="handover_type" value={t} checked={handoverForm.type === t}
+                        onChange={() => setHandoverForm({ ...handoverForm, type: t })} />
+                      {t}
+                    </label>
+                  ))}
+                </div>
+              </div>
+              {handoverForm.type === 'temporary' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Return Date</label>
+                  <input type="date" value={handoverForm.return_date}
+                    onChange={e => setHandoverForm({ ...handoverForm, return_date: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                </div>
+              )}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Reason / Note</label>
+                <textarea value={handoverForm.reason} onChange={e => setHandoverForm({ ...handoverForm, reason: e.target.value })}
+                  rows={2} placeholder="e.g. Going on leave from 1-Jul to 10-Jul"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
+              </div>
+            </div>
+            <div className="flex gap-3 mt-5">
+              <button onClick={confirmHandover} disabled={!handoverForm.to_am || savingHandover}
+                className="flex-1 bg-orange-500 text-white py-2 rounded-lg text-sm font-medium hover:bg-orange-600 disabled:opacity-50">
+                {savingHandover ? 'Confirming...' : 'Confirm Handover'}
+              </button>
+              <button onClick={() => setShowHandover(false)}
+                className="flex-1 text-gray-600 border border-gray-300 py-2 rounded-lg text-sm font-medium hover:bg-gray-50">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </AppShell>
   )
 }

@@ -121,7 +121,7 @@ export default function AssignmentsPage() {
             <h1 className="text-2xl font-bold text-gray-900">Assignments</h1>
             <p className="text-gray-500 mt-1">Manage audit engagements</p>
           </div>
-          {isManager && (
+          {isManagerOrAssistant && (
             <Link href="/assignments/new" className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 transition-colors">
               + New Assignment
             </Link>
