@@ -29,11 +29,18 @@ const STATUS_LABELS: Record<string, string> = {
   on_hold: 'On Hold',
 }
 
-const TASK_STATUS_COLORS: Record<string, string> = {
-  not_started: 'bg-gray-100 text-gray-700',
+const OBS_RISK_COLORS: Record<string, string> = {
+  low: 'bg-green-100 text-green-700',
+  medium: 'bg-yellow-100 text-yellow-700',
+  high: 'bg-orange-100 text-orange-700',
+  critical: 'bg-red-100 text-red-700',
+}
+
+const OBS_STATUS_COLORS: Record<string, string> = {
+  open: 'bg-red-100 text-red-700',
   in_progress: 'bg-blue-100 text-blue-700',
-  completed: 'bg-green-100 text-green-700',
-  overdue: 'bg-red-100 text-red-700',
+  resolved: 'bg-green-100 text-green-700',
+  closed: 'bg-gray-100 text-gray-700',
 }
 
 const TYPE_LABELS: Record<string, string> = {
@@ -52,6 +59,7 @@ export default function AssignmentsPage() {
   const [deleting, setDeleting] = useState<string | null>(null)
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   const [tasksByAssignment, setTasksByAssignment] = useState<Record<string, Record<string, unknown>[]>>({})
+  const [obsByTask, setObsByTask] = useState<Record<string, Record<string, unknown>[]>>({})
   const [loadingTasks, setLoadingTasks] = useState<Record<string, boolean>>({})
 
   useEffect(() => {
@@ -76,12 +84,30 @@ export default function AssignmentsPage() {
     setExpanded(prev => ({ ...prev, [assignmentId]: !isOpen }))
     if (!isOpen && !tasksByAssignment[assignmentId]) {
       setLoadingTasks(prev => ({ ...prev, [assignmentId]: true }))
-      const { data } = await supabase
+      const { data: tasks } = await supabase
         .from('tasks')
         .select('*, assignee:profiles(full_name)')
         .eq('assignment_id', assignmentId)
         .order('created_at')
-      setTasksByAssignment(prev => ({ ...prev, [assignmentId]: data ?? [] }))
+      const taskList = tasks ?? []
+      setTasksByAssignment(prev => ({ ...prev, [assignmentId]: taskList }))
+
+      // Fetch observations for each task
+      const taskIds = taskList.map(t => t.id as string)
+      if (taskIds.length > 0) {
+        const { data: obsData } = await supabase
+          .from('observations')
+          .select('*')
+          .in('task_id', taskIds)
+          .order('created_at')
+        const grouped: Record<string, Record<string, unknown>[]> = {}
+        for (const o of obsData ?? []) {
+          const tid = o.task_id as string
+          if (!grouped[tid]) grouped[tid] = []
+          grouped[tid].push(o)
+        }
+        setObsByTask(prev => ({ ...prev, ...grouped }))
+      }
       setLoadingTasks(prev => ({ ...prev, [assignmentId]: false }))
     }
   }
@@ -231,27 +257,60 @@ export default function AssignmentsPage() {
                             ) : tasks.length === 0 ? (
                               <p className="text-xs text-gray-400 py-2">No tasks added yet.</p>
                             ) : (
-                              <div className="space-y-1.5">
-                                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Tasks</p>
-                                {tasks.map(t => (
-                                  <div key={t.id as string} className="flex items-center justify-between bg-white rounded-lg px-4 py-2.5 border border-gray-100">
-                                    <div className="flex items-center gap-3">
-                                      <div className={`w-2 h-2 rounded-full ${
-                                        t.status === 'completed' ? 'bg-green-400' :
-                                        t.status === 'in_progress' ? 'bg-blue-400' :
-                                        t.status === 'overdue' ? 'bg-red-400' : 'bg-gray-300'
-                                      }`} />
-                                      <span className="text-sm font-medium text-gray-800">{t.title as string}</span>
+                              <div className="space-y-3">
+                                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Tasks & Observations</p>
+                                {tasks.map(t => {
+                                  const tId = t.id as string
+                                  const taskObs = obsByTask[tId] ?? []
+                                  return (
+                                    <div key={tId} className="bg-white rounded-lg border border-gray-100 overflow-hidden">
+                                      {/* Task row */}
+                                      <div className="flex items-center justify-between px-4 py-2.5">
+                                        <div className="flex items-center gap-3">
+                                          <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                                            t.status === 'completed' ? 'bg-green-400' :
+                                            t.status === 'in_progress' ? 'bg-blue-400' :
+                                            t.status === 'overdue' ? 'bg-red-400' : 'bg-gray-300'
+                                          }`} />
+                                          <span className="text-sm font-medium text-gray-800">{t.title as string}</span>
+                                        </div>
+                                        <div className="flex items-center gap-4 text-xs text-gray-500">
+                                          <span>→ {(t.assignee as { full_name?: string })?.full_name ?? 'Unassigned'}</span>
+                                          <span>Due {t.due_date as string}</span>
+                                          <span className={`px-2 py-0.5 rounded-full font-medium ${
+                                            t.status === 'completed' ? 'bg-green-100 text-green-700' :
+                                            t.status === 'in_progress' ? 'bg-blue-100 text-blue-700' :
+                                            t.status === 'overdue' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-700'
+                                          }`}>
+                                            {(t.status as string).replace(/_/g, ' ')}
+                                          </span>
+                                        </div>
+                                      </div>
+
+                                      {/* Observations under task */}
+                                      {taskObs.length > 0 && (
+                                        <div className="border-t border-gray-100 bg-gray-50 px-4 py-2 space-y-1.5">
+                                          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Observations</p>
+                                          {taskObs.map(o => (
+                                            <div key={o.id as string} className="flex items-center justify-between bg-white rounded-md px-3 py-2 border border-gray-100">
+                                              <div className="flex items-center gap-2">
+                                                <span className="text-sm text-gray-700 font-medium">{o.title as string}</span>
+                                              </div>
+                                              <div className="flex items-center gap-2">
+                                                <span className={`text-xs px-2 py-0.5 rounded-full font-medium capitalize ${OBS_RISK_COLORS[o.risk_level as string] ?? 'bg-gray-100 text-gray-600'}`}>
+                                                  {o.risk_level as string}
+                                                </span>
+                                                <span className={`text-xs px-2 py-0.5 rounded-full font-medium capitalize ${OBS_STATUS_COLORS[o.status as string] ?? 'bg-gray-100 text-gray-600'}`}>
+                                                  {(o.status as string).replace(/_/g, ' ')}
+                                                </span>
+                                              </div>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      )}
                                     </div>
-                                    <div className="flex items-center gap-4 text-xs text-gray-500">
-                                      <span>→ {(t.assignee as { full_name?: string })?.full_name ?? 'Unassigned'}</span>
-                                      <span>Due {t.due_date as string}</span>
-                                      <span className={`px-2 py-0.5 rounded-full font-medium ${TASK_STATUS_COLORS[t.status as string] ?? 'bg-gray-100 text-gray-700'}`}>
-                                        {(t.status as string).replace(/_/g, ' ')}
-                                      </span>
-                                    </div>
-                                  </div>
-                                ))}
+                                  )
+                                })}
                               </div>
                             )}
                           </td>
