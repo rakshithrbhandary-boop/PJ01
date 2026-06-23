@@ -130,8 +130,10 @@ export default function AssignmentDetailPage() {
   const isAssignedAM = isAssistantManager && (assignment.assigned_to as string) === currentProfile?.id
   const canAddTasks = isManager || isAssignedAM || isExecutive
 
+  const lastHandover = handoverHistory.length > 0 ? handoverHistory[handoverHistory.length - 1] : null
   const assignedToName =
-    otherAMs.find(a => a.id === (assignment.assigned_to as string))?.full_name
+    (lastHandover ? (lastHandover.to_am_name as string) : null)
+    ?? otherAMs.find(a => a.id === (assignment.assigned_to as string))?.full_name
     ?? (assignment.assigned_to_profile as { full_name?: string } | null)?.full_name
   const managerName = (assignment.manager as { full_name?: string })?.full_name
 
@@ -195,15 +197,12 @@ export default function AssignmentDetailPage() {
                 <span className="text-xs px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-700 font-medium">Handed Over</span>
               )}
             </div>
-            {handoverHistory.length > 0 && (() => {
-              const last = handoverHistory[handoverHistory.length - 1]
-              return (
-                <p className="text-xs text-gray-400 mt-0.5">
-                  from {last.from_am_name as string}
-                  {(last.return_date as string) ? ` · returns ${last.return_date as string}` : ''}
-                </p>
-              )
-            })()}
+            {lastHandover && (
+              <p className="text-xs text-gray-400 mt-0.5">
+                from {lastHandover.from_am_name as string}
+                {(lastHandover.return_date as string) ? ` · returns ${lastHandover.return_date as string}` : ''}
+              </p>
+            )}
           </div>
           <div className="bg-white rounded-xl p-4 border border-gray-100 shadow-sm">
             <p className="text-xs text-gray-500 uppercase tracking-wider">Due Date</p>
