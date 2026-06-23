@@ -39,6 +39,7 @@ export default function ObservationsPage() {
   const [grouped, setGrouped] = useState<{ assignmentId: string; title: string; obs: Obs[] }[]>([])
   const [loading, setLoading] = useState(true)
   const [profile, setProfile] = useState<Profile | null>(null)
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({})
   const [expandedObs, setExpandedObs] = useState<Record<string, boolean>>({})
   const [newComment, setNewComment] = useState<Record<string, string>>({})
   const [savingComment, setSavingComment] = useState<string | null>(null)
@@ -153,15 +154,28 @@ export default function ObservationsPage() {
               const unaddressed = obs.filter(o => !isAddressed(o))
               const addressed = obs.filter(o => isAddressed(o))
 
+              const isGroupOpen = expandedGroups[assignmentId] ?? false
+
               return (
                 <div key={assignmentId} className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
                   {/* Assignment header */}
-                  <div className="bg-gray-50 border-b border-gray-100 px-6 py-4 flex items-center justify-between">
-                    <div>
-                      <Link href={`/assignments/${assignmentId}`} className="text-base font-semibold text-gray-900 hover:text-blue-600">
-                        {title}
-                      </Link>
-                      <p className="text-xs text-gray-500 mt-0.5">{obs.length} observation{obs.length !== 1 ? 's' : ''}</p>
+                  <div
+                    className="bg-gray-50 border-b border-gray-100 px-6 py-4 flex items-center justify-between cursor-pointer hover:bg-gray-100 transition-colors"
+                    onClick={() => setExpandedGroups(prev => ({ ...prev, [assignmentId]: !prev[assignmentId] }))}
+                  >
+                    <div className="flex items-center gap-3">
+                      <button className="w-6 h-6 flex items-center justify-center rounded hover:bg-gray-200 transition-colors text-gray-400 flex-shrink-0">
+                        <svg className={`w-3.5 h-3.5 transition-transform duration-200 ${isGroupOpen ? 'rotate-90' : ''}`}
+                          fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                        </svg>
+                      </button>
+                      <div>
+                        <Link href={`/assignments/${assignmentId}`} className="text-base font-semibold text-gray-900 hover:text-blue-600" onClick={e => e.stopPropagation()}>
+                          {title}
+                        </Link>
+                        <p className="text-xs text-gray-500 mt-0.5">{obs.length} observation{obs.length !== 1 ? 's' : ''}</p>
+                      </div>
                     </div>
                     <div className="flex items-center gap-3 text-xs font-medium">
                       <span className="flex items-center gap-1.5 px-3 py-1.5 bg-red-50 text-red-700 rounded-full">
@@ -175,7 +189,7 @@ export default function ObservationsPage() {
                     </div>
                   </div>
 
-                  <div className="divide-y divide-gray-50">
+                  {isGroupOpen && <div className="divide-y divide-gray-50">
                     {/* Unaddressed section */}
                     {unaddressed.length > 0 && (
                       <div>
@@ -199,7 +213,7 @@ export default function ObservationsPage() {
                         </div>
                       </div>
                     )}
-                  </div>
+                  </div>}
                 </div>
               )
             })}
