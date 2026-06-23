@@ -7,29 +7,19 @@ import { supabase } from '@/lib/supabase'
 import type { Profile } from '@/lib/supabase'
 
 const STATUS_COLORS: Record<string, string> = {
-  planning: 'bg-yellow-100 text-yellow-800',
-  in_progress: 'bg-blue-100 text-blue-800',
-  fieldwork: 'bg-indigo-100 text-indigo-800',
-  data_collection: 'bg-cyan-100 text-cyan-800',
-  analysis: 'bg-purple-100 text-purple-800',
-  pending_review: 'bg-orange-100 text-orange-800',
-  pending_clarification: 'bg-red-100 text-red-800',
-  completed: 'bg-green-100 text-green-800',
+  planning: 'bg-yellow-100 text-yellow-800', in_progress: 'bg-blue-100 text-blue-800',
+  fieldwork: 'bg-indigo-100 text-indigo-800', data_collection: 'bg-cyan-100 text-cyan-800',
+  analysis: 'bg-purple-100 text-purple-800', pending_review: 'bg-orange-100 text-orange-800',
+  pending_clarification: 'bg-red-100 text-red-800', completed: 'bg-green-100 text-green-800',
   on_hold: 'bg-gray-100 text-gray-800',
 }
-
 const TASK_STATUS_COLORS: Record<string, string> = {
-  not_started: 'bg-gray-100 text-gray-800',
-  in_progress: 'bg-blue-100 text-blue-800',
-  completed: 'bg-green-100 text-green-800',
-  overdue: 'bg-red-100 text-red-800',
+  not_started: 'bg-gray-100 text-gray-700', in_progress: 'bg-blue-100 text-blue-700',
+  completed: 'bg-green-100 text-green-700', overdue: 'bg-red-100 text-red-700',
 }
-
 const RISK_COLORS: Record<string, string> = {
-  low: 'bg-green-100 text-green-800',
-  medium: 'bg-yellow-100 text-yellow-800',
-  high: 'bg-orange-100 text-orange-800',
-  critical: 'bg-red-100 text-red-800',
+  low: 'bg-green-100 text-green-800', medium: 'bg-yellow-100 text-yellow-800',
+  high: 'bg-orange-100 text-orange-800', critical: 'bg-red-100 text-red-800',
 }
 
 export default function AssignmentDetailPage() {
@@ -42,17 +32,24 @@ export default function AssignmentDetailPage() {
   const [executives, setExecutives] = useState<{ id: string; full_name: string }[]>([])
   const [loading, setLoading] = useState(true)
 
-  // New task inline form
   const [showTaskForm, setShowTaskForm] = useState(false)
   const [taskForm, setTaskForm] = useState({ title: '', assigned_to: '', priority: 'medium', due_date: '' })
   const [savingTask, setSavingTask] = useState(false)
 
-  // Handover
   const [showHandover, setShowHandover] = useState(false)
   const [otherAMs, setOtherAMs] = useState<{ id: string; full_name: string }[]>([])
   const [handoverForm, setHandoverForm] = useState({ to_am: '', type: 'temporary', return_date: '', reason: '' })
   const [savingHandover, setSavingHandover] = useState(false)
   const [handoverHistory, setHandoverHistory] = useState<Record<string, unknown>[]>([])
+
+  // Task status inline update
+  const [updatingTaskStatus, setUpdatingTaskStatus] = useState<string | null>(null)
+
+  // Task delegation
+  const [delegatingTask, setDelegatingTask] = useState<string | null>(null)
+  const [delegateTo, setDelegateTo] = useState('')
+  const [delegateNote, setDelegateNote] = useState('')
+  const [savingDelegate, setSavingDelegate] = useState(false)
 
   useEffect(() => {
     async function load() {
@@ -73,7 +70,7 @@ export default function AssignmentDetailPage() {
       setTasks(t ?? [])
       setObservations(o ?? [])
       setExecutives(ex ?? [])
-      setOtherAMs((ams ?? []))
+      setOtherAMs(ams ?? [])
       setHandoverHistory(hist ?? [])
       setLoading(false)
     }
@@ -97,6 +94,49 @@ export default function AssignmentDetailPage() {
     setSavingTask(false)
   }
 
+  async function selfAssignTask() {
+    if (!taskForm.title || !taskForm.due_date || !currentProfile) return
+    setSavingTask(true)
+    const { data } = await supabase.from('tasks').insert({
+      assignment_id: id,
+      title: taskForm.title,
+      assigned_to: currentProfile.id,
+      priority: taskForm.priority,
+      due_date: taskForm.due_date,
+      status: 'not_started',
+    }).select('*, assignee:profiles(full_name)').single()
+    if (data) setTasks(prev => [...prev, data])
+    setTaskForm({ title: '', assigned_to: '', priority: 'medium', due_date: '' })
+    setShowTaskForm(false)
+    setSavingTask(false)
+  }
+
+  async function updateTaskStatus(taskId: string, status: string) {
+    setUpdatingTaskStatus(taskId)
+    await supabase.from('tasks').update({ status }).eq('id', taskId)
+    setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status } : t))
+    setUpdatingTaskStatus(null)
+  }
+
+  async function delegateTask() {
+    if (!delegatingTask || !delegateTo || !currentProfile) return
+    setSavingDelegate(true)
+    const targetExecutive = executives.find(e => e.id === delegateTo)
+    await supabase.from('tasks').update({
+      assigned_to: delegateTo,
+      delegated_from: currentProfile.id,
+      delegation_note: delegateNote || null,
+    }).eq('id', delegatingTask)
+    setTasks(prev => prev.map(t => t.id === delegatingTask
+      ? { ...t, assigned_to: delegateTo, assignee: { full_name: targetExecutive?.full_name }, delegated_from: currentProfile.id }
+      : t
+    ))
+    setDelegatingTask(null)
+    setDelegateTo('')
+    setDelegateNote('')
+    setSavingDelegate(false)
+  }
+
   async function confirmHandover() {
     if (!handoverForm.to_am || !currentProfile) return
     setSavingHandover(true)
@@ -112,7 +152,6 @@ export default function AssignmentDetailPage() {
       reason: handoverForm.reason,
     }
     const { data: newHistory } = await supabase.from('assignment_handovers').insert(record).select().single()
-    // Update assignment's assigned_to
     await supabase.from('assignments').update({ assigned_to: handoverForm.to_am }).eq('id', id as string)
     setAssignment(prev => prev ? { ...prev, assigned_to: handoverForm.to_am } : prev)
     if (newHistory) setHandoverHistory(prev => [...prev, newHistory])
@@ -127,12 +166,19 @@ export default function AssignmentDetailPage() {
   const isManager = currentProfile?.role === 'manager'
   const isAssistantManager = currentProfile?.role === 'assistant_manager'
   const isExecutive = currentProfile?.role === 'executive'
+
   const lastHandover = handoverHistory.length > 0 ? handoverHistory[handoverHistory.length - 1] : null
-  const currentHandlerId = lastHandover
-    ? (lastHandover.to_am_id as string)
-    : (assignment.assigned_to as string)
-  const isAssignedAM = isAssistantManager && currentHandlerId === currentProfile?.id
-  const canAddTasks = isManager || isAssignedAM || isExecutive
+  const currentHandlerId = lastHandover ? (lastHandover.to_am_id as string) : (assignment.assigned_to as string)
+  const isCurrentAM = isAssistantManager && currentHandlerId === currentProfile?.id
+  // Previous AMs involved in handovers can view but not work
+  const isPreviousAM = isAssistantManager && !isCurrentAM &&
+    handoverHistory.some(h => h.from_am_id === currentProfile?.id || h.to_am_id === currentProfile?.id)
+
+  const isManagerOfThis = isManager && (assignment.manager_id as string) === currentProfile?.id
+
+  // Who can perform actions
+  const canManageAssignment = isManagerOfThis || isCurrentAM
+  const canAddTasksAsManager = isManagerOfThis || isCurrentAM
 
   const assignedToName =
     (lastHandover ? (lastHandover.to_am_name as string) : null)
@@ -140,7 +186,12 @@ export default function AssignmentDetailPage() {
     ?? (assignment.assigned_to_profile as { full_name?: string } | null)?.full_name
   const managerName = (assignment.manager as { full_name?: string })?.full_name
 
-  // Group tasks by executive
+  // Executives involved in this assignment (have at least one task)
+  const involvedExecutiveIds = [...new Set(tasks.map(t => t.assigned_to as string).filter(Boolean))]
+  const involvedExecutives = executives.filter(e => involvedExecutiveIds.includes(e.id))
+  const isInvolvedExecutive = isExecutive && involvedExecutiveIds.includes(currentProfile?.id ?? '')
+
+  // Group tasks by executive for manager flow view
   const tasksByExecutive: Record<string, { name: string; tasks: Record<string, unknown>[] }> = {}
   tasks.forEach(t => {
     const assigneeId = t.assigned_to as string
@@ -162,19 +213,31 @@ export default function AssignmentDetailPage() {
         {/* Header */}
         <div className="flex items-start justify-between mb-6">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">{assignment.title as string}</h1>
+            <div className="flex items-center gap-3">
+              <h1 className="text-2xl font-bold text-gray-900">{assignment.title as string}</h1>
+              {(assignment.code as string) && (
+                <span className="text-sm font-mono font-semibold px-2.5 py-1 bg-blue-50 text-blue-700 rounded-lg border border-blue-100">
+                  {assignment.code as string}
+                </span>
+              )}
+            </div>
             <p className="text-gray-500 mt-1">{assignment.client_name as string}</p>
+            {isPreviousAM && (
+              <p className="text-xs text-orange-600 mt-1 font-medium">
+                View only — this assignment has been handed over to {assignedToName}
+              </p>
+            )}
           </div>
           <div className="flex items-center gap-3">
             <span className={`text-sm font-medium px-3 py-1.5 rounded-full capitalize ${STATUS_COLORS[assignment.status as string] ?? 'bg-gray-100'}`}>
               {(assignment.status as string).replace(/_/g, ' ')}
             </span>
-            {isAssignedAM && (
+            {isCurrentAM && (
               <button onClick={() => setShowHandover(true)} className="text-sm text-orange-600 border border-orange-200 px-3 py-1.5 rounded-lg hover:bg-orange-50">
                 Handover
               </button>
             )}
-            {isManager && (
+            {isManagerOfThis && (
               <Link href={`/assignments/${id}/edit`} className="text-sm text-blue-600 border border-blue-200 px-3 py-1.5 rounded-lg hover:bg-blue-50">
                 Edit
               </Link>
@@ -213,15 +276,14 @@ export default function AssignmentDetailPage() {
           </div>
         </div>
 
-        {/* Assignment Flow — Manager Overview */}
-        {isManager && (
+        {/* Assignment Flow — Manager/AM Overview */}
+        {(isManagerOfThis || isCurrentAM || isPreviousAM) && (
           <div className="bg-white rounded-xl border border-gray-100 shadow-sm mb-6 p-6">
-            <h3 className="font-semibold text-gray-900 mb-4">Assignment Flow Overview</h3>
+            <h3 className="font-semibold text-gray-900 mb-4">Assignment Flow</h3>
             <div className="flex items-start gap-4">
-              {/* Manager box */}
               <div className="text-center">
                 <div className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center text-white font-bold text-sm mx-auto mb-1">
-                  {managerName?.[0]?.toUpperCase()}
+                  {managerName?.[0]?.toUpperCase() ?? 'M'}
                 </div>
                 <p className="text-xs font-medium text-gray-700">{managerName}</p>
                 <p className="text-xs text-gray-400">Manager</p>
@@ -229,7 +291,6 @@ export default function AssignmentDetailPage() {
               <div className="flex-1 mt-4 border-t-2 border-dashed border-gray-200 relative">
                 <span className="absolute -top-2 left-1/2 -translate-x-1/2 text-xs text-gray-400 bg-white px-1">assigns to</span>
               </div>
-              {/* AM box */}
               <div className="text-center">
                 <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm mx-auto mb-1 ${assignedToName ? 'bg-indigo-500' : 'bg-gray-300'}`}>
                   {assignedToName ? assignedToName[0].toUpperCase() : '?'}
@@ -240,20 +301,19 @@ export default function AssignmentDetailPage() {
               <div className="flex-1 mt-4 border-t-2 border-dashed border-gray-200 relative">
                 <span className="absolute -top-2 left-1/2 -translate-x-1/2 text-xs text-gray-400 bg-white px-1">tasks to</span>
               </div>
-              {/* Executives */}
-              <div className="flex gap-2">
-                {Object.values(tasksByExecutive).length === 0 ? (
+              <div className="flex gap-3">
+                {involvedExecutives.length === 0 ? (
                   <div className="text-center">
                     <div className="w-10 h-10 bg-gray-200 rounded-full flex items-center justify-center text-gray-400 text-sm mx-auto mb-1">?</div>
-                    <p className="text-xs text-gray-400">No tasks yet</p>
+                    <p className="text-xs text-gray-400">No executives yet</p>
                   </div>
-                ) : Object.values(tasksByExecutive).map(ex => (
-                  <div key={ex.name} className="text-center">
+                ) : involvedExecutives.map(ex => (
+                  <div key={ex.id} className="text-center">
                     <div className="w-10 h-10 bg-emerald-500 rounded-full flex items-center justify-center text-white font-bold text-sm mx-auto mb-1">
-                      {ex.name[0].toUpperCase()}
+                      {ex.full_name[0].toUpperCase()}
                     </div>
-                    <p className="text-xs font-medium text-gray-700">{ex.name}</p>
-                    <p className="text-xs text-gray-400">Executive · {ex.tasks.length} task{ex.tasks.length !== 1 ? 's' : ''}</p>
+                    <p className="text-xs font-medium text-gray-700">{ex.full_name}</p>
+                    <p className="text-xs text-gray-400">{tasksByExecutive[ex.id]?.tasks.length ?? 0} task{(tasksByExecutive[ex.id]?.tasks.length ?? 0) !== 1 ? 's' : ''}</p>
                   </div>
                 ))}
               </div>
@@ -261,81 +321,137 @@ export default function AssignmentDetailPage() {
           </div>
         )}
 
-        {/* Tasks Section */}
+        {/* Tasks + Observations */}
         <div className="grid grid-cols-2 gap-6">
           <div className="bg-white rounded-xl border border-gray-100 shadow-sm">
             <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
               <h3 className="font-semibold text-gray-900">Tasks ({tasks.length})</h3>
-              {canAddTasks && (
-                <button onClick={() => setShowTaskForm(!showTaskForm)}
-                  className="text-sm text-blue-600 hover:underline">
+              {canAddTasksAsManager && !isPreviousAM && (
+                <button onClick={() => setShowTaskForm(!showTaskForm)} className="text-sm text-blue-600 hover:underline">
                   {showTaskForm ? 'Cancel' : '+ Add Task'}
+                </button>
+              )}
+              {isExecutive && (
+                <button onClick={() => setShowTaskForm(!showTaskForm)} className="text-sm text-blue-600 hover:underline">
+                  {showTaskForm ? 'Cancel' : '+ Take Up Task'}
                 </button>
               )}
             </div>
 
-            {/* Inline Add Task Form */}
+            {/* Task Form */}
             {showTaskForm && (
               <div className="px-6 py-4 bg-blue-50 border-b border-blue-100 space-y-3">
-                <input
-                  placeholder="Task title *"
-                  value={taskForm.title}
+                <input placeholder="Task title *" value={taskForm.title}
                   onChange={e => setTaskForm({ ...taskForm, title: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-                <select
-                  value={taskForm.assigned_to}
-                  onChange={e => setTaskForm({ ...taskForm, assigned_to: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="">Assign to Executive *</option>
-                  {executives.map(ex => <option key={ex.id} value={ex.id}>{ex.full_name}</option>)}
-                </select>
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                {/* Executives assigned by manager/AM; executives self-assign */}
+                {canAddTasksAsManager && (
+                  <select value={taskForm.assigned_to} onChange={e => setTaskForm({ ...taskForm, assigned_to: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <option value="">Assign to Executive *</option>
+                    {executives.map(ex => <option key={ex.id} value={ex.id}>{ex.full_name}</option>)}
+                  </select>
+                )}
+                {isExecutive && (
+                  <p className="text-xs text-blue-700 bg-blue-100 px-3 py-1.5 rounded-lg">This task will be assigned to you</p>
+                )}
                 <div className="grid grid-cols-2 gap-2">
-                  <select
-                    value={taskForm.priority}
-                    onChange={e => setTaskForm({ ...taskForm, priority: e.target.value })}
-                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
+                  <select value={taskForm.priority} onChange={e => setTaskForm({ ...taskForm, priority: e.target.value })}
+                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
                     <option value="low">Low Priority</option>
                     <option value="medium">Medium Priority</option>
                     <option value="high">High Priority</option>
                   </select>
-                  <input
-                    type="date"
-                    value={taskForm.due_date}
-                    onChange={e => setTaskForm({ ...taskForm, due_date: e.target.value })}
-                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
+                  <input type="date" value={taskForm.due_date} onChange={e => setTaskForm({ ...taskForm, due_date: e.target.value })}
+                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
                 </div>
-                <button onClick={addTask} disabled={savingTask}
+                <button
+                  onClick={isExecutive ? selfAssignTask : addTask}
+                  disabled={savingTask || (!isExecutive && !taskForm.assigned_to) || !taskForm.title || !taskForm.due_date}
                   className="w-full bg-blue-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
-                  {savingTask ? 'Adding...' : 'Add Task'}
+                  {savingTask ? 'Adding...' : isExecutive ? 'Take Up This Task' : 'Add Task'}
                 </button>
               </div>
             )}
 
             {tasks.length === 0 ? (
-              <div className="px-6 py-8 text-center text-gray-400 text-sm">
-                {canAddTasks ? 'No tasks yet. Add one above.' : 'No tasks assigned yet.'}
-              </div>
+              <div className="px-6 py-8 text-center text-gray-400 text-sm">No tasks yet.</div>
             ) : (
               <div className="divide-y divide-gray-50">
-                {tasks.map(t => (
-                  <div key={t.id as string} className="px-6 py-3 flex items-center justify-between">
-                    <div>
-                      <Link href={`/tasks/${t.id}`} className="font-medium text-sm text-gray-900 hover:text-blue-600">
-                        {t.title as string}
-                      </Link>
-                      <p className="text-xs text-gray-500">
-                        → {(t.assignee as { full_name?: string })?.full_name} · Due {t.due_date as string}
-                      </p>
+                {tasks.map(t => {
+                  const tId = t.id as string
+                  const isMyTask = (t.assigned_to as string) === currentProfile?.id
+                  const canUpdateStatus = isMyTask && isExecutive
+                  const isBeingDelegated = delegatingTask === tId
+                  // Other involved executives I can delegate to (not myself)
+                  const delegatableExecutives = involvedExecutives.filter(e => e.id !== currentProfile?.id)
+
+                  return (
+                    <div key={tId}>
+                      <div className="px-6 py-3 flex items-center justify-between">
+                        <div className="flex-1 min-w-0">
+                          <Link href={`/tasks/${tId}`} className="font-medium text-sm text-gray-900 hover:text-blue-600">
+                            {t.title as string}
+                          </Link>
+                          <div className="flex items-center gap-2 text-xs text-gray-500 mt-0.5">
+                            <span>→ {(t.assignee as { full_name?: string })?.full_name ?? 'Unassigned'}</span>
+                            {(t.delegated_from as string) && (
+                              <span className="px-1.5 py-0.5 bg-purple-50 text-purple-600 rounded font-medium">Delegated</span>
+                            )}
+                            <span>· Due {t.due_date as string}</span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 ml-3">
+                          {canUpdateStatus ? (
+                            <select
+                              value={t.status as string}
+                              onChange={e => updateTaskStatus(tId, e.target.value)}
+                              disabled={updatingTaskStatus === tId}
+                              className={`text-xs font-medium px-2 py-0.5 rounded-full border-0 cursor-pointer ${TASK_STATUS_COLORS[t.status as string] ?? 'bg-gray-100 text-gray-700'}`}
+                            >
+                              <option value="not_started">Not Started</option>
+                              <option value="in_progress">In Progress</option>
+                              <option value="completed">Completed</option>
+                              <option value="overdue">Overdue</option>
+                            </select>
+                          ) : (
+                            <span className={`text-xs px-2 py-0.5 rounded-full ${TASK_STATUS_COLORS[t.status as string] ?? 'bg-gray-100 text-gray-700'}`}>
+                              {(t.status as string).replace(/_/g, ' ')}
+                            </span>
+                          )}
+                          {/* Delegate button — only for executive who owns the task */}
+                          {isMyTask && isExecutive && delegatableExecutives.length > 0 && (
+                            <button
+                              onClick={() => { setDelegatingTask(isBeingDelegated ? null : tId); setDelegateTo(''); setDelegateNote('') }}
+                              className="text-xs text-purple-600 border border-purple-200 px-2 py-0.5 rounded hover:bg-purple-50"
+                            >
+                              {isBeingDelegated ? 'Cancel' : 'Delegate'}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Delegate panel */}
+                      {isBeingDelegated && (
+                        <div className="mx-6 mb-3 p-3 bg-purple-50 border border-purple-100 rounded-lg space-y-2">
+                          <p className="text-xs font-semibold text-purple-800">Delegate to another executive on this assignment</p>
+                          <select value={delegateTo} onChange={e => setDelegateTo(e.target.value)}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-400">
+                            <option value="">— Select Executive —</option>
+                            {delegatableExecutives.map(e => <option key={e.id} value={e.id}>{e.full_name}</option>)}
+                          </select>
+                          <input value={delegateNote} onChange={e => setDelegateNote(e.target.value)}
+                            placeholder="Reason / note (optional)"
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-400" />
+                          <button onClick={delegateTask} disabled={!delegateTo || savingDelegate}
+                            className="w-full bg-purple-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-purple-700 disabled:opacity-50">
+                            {savingDelegate ? 'Delegating...' : 'Confirm Delegation'}
+                          </button>
+                        </div>
+                      )}
                     </div>
-                    <span className={`text-xs px-2 py-0.5 rounded-full ${TASK_STATUS_COLORS[t.status as string] ?? 'bg-gray-100'}`}>
-                      {(t.status as string).replace('_', ' ')}
-                    </span>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             )}
           </div>
