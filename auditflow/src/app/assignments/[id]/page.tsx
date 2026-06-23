@@ -485,15 +485,26 @@ export default function AssignmentDetailPage() {
             ) : (
               <div className="divide-y divide-gray-50">
                 {observations.map(o => (
-                  <div key={o.id as string} className="px-6 py-3 flex items-center justify-between">
+                  <Link key={o.id as string} href={`/observations/${o.id as string}`}
+                    className="px-6 py-3 flex items-center justify-between hover:bg-gray-50 transition-colors">
                     <div>
-                      <p className="font-medium text-sm text-gray-900">{o.title as string}</p>
+                      <p className="font-medium text-sm text-gray-900 hover:text-blue-600">{o.title as string}</p>
                       <p className="text-xs text-gray-500">{(o.raiser as { full_name?: string })?.full_name}</p>
                     </div>
-                    <span className={`text-xs px-2 py-0.5 rounded-full capitalize ${RISK_COLORS[o.risk_level as string] ?? 'bg-gray-100'}`}>
-                      {o.risk_level as string}
-                    </span>
-                  </div>
+                    <div className="flex items-center gap-2">
+                      <span className={`text-xs px-2 py-0.5 rounded-full capitalize ${RISK_COLORS[o.risk_level as string] ?? 'bg-gray-100'}`}>
+                        {o.risk_level as string}
+                      </span>
+                      <span className={`text-xs px-2 py-0.5 rounded-full capitalize ${
+                        (o.status as string) === 'open' ? 'bg-red-100 text-red-700' :
+                        (o.status as string) === 'resolved' ? 'bg-green-100 text-green-700' :
+                        (o.status as string) === 'in_progress' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-700'
+                      }`}>{(o.status as string)?.replace(/_/g, ' ')}</span>
+                      <svg className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                      </svg>
+                    </div>
+                  </Link>
                 ))}
               </div>
             )}
