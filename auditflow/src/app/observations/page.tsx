@@ -76,8 +76,7 @@ export default function ObservationsPage() {
       const { data } = await supabase.from('observation_comments')
         .select('*').eq('observation_id', id).order('created_at')
       setCommentsByObs(prev => ({ ...prev, [id]: (data ?? []) as Comment[] }))
-    }
-  }
+    }  }
 
   async function postComment(obsId: string) {
     if (!profile || !newComment[obsId]?.trim()) return
@@ -209,7 +208,22 @@ export default function ObservationsPage() {
                         <div>
                           <p className="text-xs font-semibold text-gray-500 uppercase mb-3">Comments / Action Required</p>
                           <div className="space-y-2 mb-3">
-                            {comments.length === 0 && <p className="text-sm text-gray-400">No comments yet.</p>}
+                            {/* Legacy comment from old single-field system */}
+                            {(o.manager_input as string) && comments.length === 0 && (
+                              <div className="p-3 bg-white border border-gray-200 rounded-lg">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <span className="text-xs font-semibold text-gray-800">{(o.manager_input_by_name as string) || 'Management'}</span>
+                                  <span className={`text-xs px-2 py-0.5 rounded-full capitalize ${ROLE_COLORS[(o.manager_input_by_role as string)] ?? 'bg-gray-100 text-gray-600'}`}>
+                                    {((o.manager_input_by_role as string) || 'manager').replace('_', ' ')}
+                                  </span>
+                                  {(o.manager_input_at as string) && (
+                                    <span className="text-xs text-gray-400">· {new Date(o.manager_input_at as string).toLocaleString()}</span>
+                                  )}
+                                </div>
+                                <p className="text-sm text-gray-700">{o.manager_input as string}</p>
+                              </div>
+                            )}
+                            {!o.manager_input && comments.length === 0 && <p className="text-sm text-gray-400">No comments yet.</p>}
                             {comments.map(c => (
                               <div key={c.id} className="p-3 bg-white border border-gray-200 rounded-lg">
                                 <div className="flex items-center gap-2 mb-1">
@@ -244,7 +258,7 @@ export default function ObservationsPage() {
                         </div>
 
                         {/* Executive acknowledgement — shown when there are comments */}
-                        {comments.length > 0 && !canComment && (
+                        {(comments.length > 0 || (o.manager_input as string)) && !canComment && (
                           <div className="border-t border-gray-200 pt-4">
                             <p className="text-xs font-semibold text-gray-500 uppercase mb-2">Your Acknowledgement</p>
                             <div className="flex items-center gap-3" onClick={e => e.stopPropagation()}>
