@@ -1,140 +1,101 @@
-'use client'
-import { useEffect, useState } from 'react'
 import AppShell from '@/components/AppShell'
-import { supabase } from '@/lib/supabase'
+
+const COMING_SOON = [
+  {
+    icon: '🤖',
+    title: 'AI-Generated Observation Report',
+    description: 'Automatically draft audit observation reports using AI — summarizing findings, risk levels, and recommended actions in a structured format.',
+    tag: 'AI-Powered',
+    tagColor: 'bg-purple-100 text-purple-700',
+  },
+  {
+    icon: '📋',
+    title: 'Assignment Status Report',
+    description: 'Export a complete status snapshot of any assignment — tasks, observations, team members, progress, and handover history — as PDF or Excel.',
+    tag: 'Export',
+    tagColor: 'bg-blue-100 text-blue-700',
+  },
+  {
+    icon: '⚠️',
+    title: 'Risk Summary Report',
+    description: 'Consolidated view of all observations grouped by risk level across assignments, with addressed vs unaddressed breakdown and risk trends.',
+    tag: 'Analytics',
+    tagColor: 'bg-orange-100 text-orange-700',
+  },
+  {
+    icon: '👤',
+    title: 'Executive Performance Report',
+    description: 'Task completion rates, overdue tasks, and average turnaround time per executive across all assignments they are involved in.',
+    tag: 'Analytics',
+    tagColor: 'bg-orange-100 text-orange-700',
+  },
+  {
+    icon: '🔁',
+    title: 'Handover & Continuity Report',
+    description: 'Full history of assignment handovers with reasons, durations, current handlers, and temporary vs permanent transfer details.',
+    tag: 'Export',
+    tagColor: 'bg-blue-100 text-blue-700',
+  },
+  {
+    icon: '✅',
+    title: 'Observation Response Tracker',
+    description: 'Track which observations have been acknowledged, disputed, or are still pending executive response — across all assignments.',
+    tag: 'Analytics',
+    tagColor: 'bg-orange-100 text-orange-700',
+  },
+  {
+    icon: '⏱️',
+    title: 'Time & Effort Report',
+    description: 'Hours logged per assignment and team member from timesheets, with effort distribution and billing summaries.',
+    tag: 'Export',
+    tagColor: 'bg-blue-100 text-blue-700',
+  },
+  {
+    icon: '📜',
+    title: 'Audit Trail Export',
+    description: 'Exportable log of every create, update, and delete action across the system — with timestamps, users, and before/after values.',
+    tag: 'Export',
+    tagColor: 'bg-blue-100 text-blue-700',
+  },
+]
 
 export default function ReportsPage() {
-  const [assignmentsByType, setAssignmentsByType] = useState<Record<string, number>>({})
-  const [tasksByStatus, setTasksByStatus] = useState<Record<string, number>>({})
-  const [obsByRisk, setObsByRisk] = useState<Record<string, number>>({})
-  const [hoursByAssignment, setHoursByAssignment] = useState<{ title: string; hours: number }[]>([])
-
-  useEffect(() => {
-    async function load() {
-      const [{ data: assignments }, { data: tasks }, { data: obs }, { data: timesheets }] = await Promise.all([
-        supabase.from('assignments').select('type'),
-        supabase.from('tasks').select('status'),
-        supabase.from('observations').select('risk_level'),
-        supabase.from('timesheet_entries').select('hours, assignment:assignments(title)'),
-      ])
-
-      const aByType: Record<string, number> = {}
-      assignments?.forEach(a => { aByType[a.type] = (aByType[a.type] ?? 0) + 1 })
-      setAssignmentsByType(aByType)
-
-      const tByStatus: Record<string, number> = {}
-      tasks?.forEach(t => { tByStatus[t.status] = (tByStatus[t.status] ?? 0) + 1 })
-      setTasksByStatus(tByStatus)
-
-      const oByRisk: Record<string, number> = {}
-      obs?.forEach(o => { oByRisk[o.risk_level] = (oByRisk[o.risk_level] ?? 0) + 1 })
-      setObsByRisk(oByRisk)
-
-      const hByA: Record<string, number> = {}
-      timesheets?.forEach((t: Record<string, unknown>) => {
-        const title = (t.assignment as { title?: string })?.title ?? 'Unknown'
-        hByA[title] = (hByA[title] ?? 0) + (t.hours as number)
-      })
-      setHoursByAssignment(Object.entries(hByA).map(([title, hours]) => ({ title, hours })).sort((a, b) => b.hours - a.hours))
-    }
-    load()
-  }, [])
-
-  const typeLabels: Record<string, string> = {
-    internal_audit: 'Internal Audit', concurrent_audit: 'Concurrent Audit',
-    process_consulting: 'Process Consulting', due_diligence: 'Due Diligence'
-  }
-
-  function Bar({ value, max, color }: { value: number; max: number; color: string }) {
-    const pct = max > 0 ? (value / max) * 100 : 0
-    return (
-      <div className="flex items-center gap-3">
-        <div className="flex-1 bg-gray-100 rounded-full h-3">
-          <div className={`h-3 rounded-full ${color}`} style={{ width: `${pct}%` }} />
-        </div>
-        <span className="text-sm font-medium text-gray-900 w-6">{value}</span>
-      </div>
-    )
-  }
-
-  const maxA = Math.max(...Object.values(assignmentsByType), 1)
-  const maxT = Math.max(...Object.values(tasksByStatus), 1)
-  const maxO = Math.max(...Object.values(obsByRisk), 1)
-  const maxH = Math.max(...hoursByAssignment.map(h => h.hours), 1)
-
   return (
     <AppShell>
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900 mb-2">Reports</h1>
-        <p className="text-gray-500 mb-8">Analytics and performance overview</p>
+      <div className="max-w-4xl">
+        {/* Header */}
+        <div className="mb-10">
+          <h1 className="text-2xl font-bold text-gray-900">Reports</h1>
+          <p className="text-gray-500 mt-1">Analytics, exports, and AI-powered insights</p>
+        </div>
 
-        <div className="grid grid-cols-2 gap-6">
-          <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100">
-            <h3 className="font-semibold text-gray-900 mb-4">Assignments by Type</h3>
-            <div className="space-y-3">
-              {Object.entries(assignmentsByType).map(([type, count]) => (
-                <div key={type}>
-                  <div className="flex justify-between text-sm text-gray-600 mb-1">
-                    <span>{typeLabels[type] ?? type}</span>
-                    <span className="font-medium">{count}</span>
+        {/* Under construction banner */}
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-6 mb-10 flex items-start gap-4">
+          <span className="text-3xl">🚧</span>
+          <div>
+            <p className="font-semibold text-amber-900 text-lg">This section is under construction</p>
+            <p className="text-amber-700 text-sm mt-1">
+              We're building powerful reporting and export tools for AuditFlow. The features below are actively being developed and will be available soon.
+            </p>
+          </div>
+        </div>
+
+        {/* Feature list */}
+        <div>
+          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-4">Features Coming Soon</p>
+          <div className="grid grid-cols-2 gap-4">
+            {COMING_SOON.map(f => (
+              <div key={f.title} className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 flex gap-4 opacity-80">
+                <span className="text-2xl flex-shrink-0 mt-0.5">{f.icon}</span>
+                <div>
+                  <div className="flex items-center gap-2 mb-1">
+                    <p className="font-semibold text-gray-800 text-sm">{f.title}</p>
+                    <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${f.tagColor}`}>{f.tag}</span>
                   </div>
-                  <Bar value={count} max={maxA} color="bg-blue-500" />
+                  <p className="text-xs text-gray-500 leading-relaxed">{f.description}</p>
                 </div>
-              ))}
-              {Object.keys(assignmentsByType).length === 0 && <p className="text-gray-400 text-sm">No data yet</p>}
-            </div>
-          </div>
-
-          <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100">
-            <h3 className="font-semibold text-gray-900 mb-4">Tasks by Status</h3>
-            <div className="space-y-3">
-              {[['not_started', 'bg-gray-400'], ['in_progress', 'bg-blue-500'], ['completed', 'bg-green-500'], ['overdue', 'bg-red-500']].map(([s, c]) => (
-                tasksByStatus[s] !== undefined && (
-                  <div key={s}>
-                    <div className="flex justify-between text-sm text-gray-600 mb-1">
-                      <span className="capitalize">{s.replace('_', ' ')}</span>
-                      <span className="font-medium">{tasksByStatus[s]}</span>
-                    </div>
-                    <Bar value={tasksByStatus[s]} max={maxT} color={c} />
-                  </div>
-                )
-              ))}
-              {Object.keys(tasksByStatus).length === 0 && <p className="text-gray-400 text-sm">No data yet</p>}
-            </div>
-          </div>
-
-          <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100">
-            <h3 className="font-semibold text-gray-900 mb-4">Observations by Risk Level</h3>
-            <div className="space-y-3">
-              {[['critical', 'bg-red-500'], ['high', 'bg-orange-500'], ['medium', 'bg-yellow-500'], ['low', 'bg-green-500']].map(([r, c]) => (
-                obsByRisk[r] !== undefined && (
-                  <div key={r}>
-                    <div className="flex justify-between text-sm text-gray-600 mb-1">
-                      <span className="capitalize">{r}</span>
-                      <span className="font-medium">{obsByRisk[r]}</span>
-                    </div>
-                    <Bar value={obsByRisk[r]} max={maxO} color={c} />
-                  </div>
-                )
-              ))}
-              {Object.keys(obsByRisk).length === 0 && <p className="text-gray-400 text-sm">No data yet</p>}
-            </div>
-          </div>
-
-          <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100">
-            <h3 className="font-semibold text-gray-900 mb-4">Hours by Assignment</h3>
-            <div className="space-y-3">
-              {hoursByAssignment.slice(0, 6).map(({ title, hours }) => (
-                <div key={title}>
-                  <div className="flex justify-between text-sm text-gray-600 mb-1">
-                    <span className="truncate max-w-[200px]">{title}</span>
-                    <span className="font-medium">{hours.toFixed(1)}h</span>
-                  </div>
-                  <Bar value={hours} max={maxH} color="bg-indigo-500" />
-                </div>
-              ))}
-              {hoursByAssignment.length === 0 && <p className="text-gray-400 text-sm">No timesheet data yet</p>}
-            </div>
+              </div>
+            ))}
           </div>
         </div>
       </div>
