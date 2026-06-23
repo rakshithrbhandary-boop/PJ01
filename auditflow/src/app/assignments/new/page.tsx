@@ -32,6 +32,7 @@ export default function NewAssignmentPage() {
     assigned_to: '',
   })
   const [isDailyAudit, setIsDailyAudit] = useState(false)
+  const [alwaysActive, setAlwaysActive] = useState(false)
   const [scopes, setScopes] = useState<Scope[]>([{ name: '', verification_frequency: 'Daily', reporting_frequency: 'Daily' }])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -67,6 +68,8 @@ export default function NewAssignmentPage() {
       manager_id: userId,
       assigned_to: form.assigned_to || null,
       daily_audit_scopes: isDailyAudit ? scopes.filter(s => s.name.trim()) : null,
+      always_active: alwaysActive,
+      due_date: alwaysActive ? null : form.due_date,
     }
     const { data, error: err } = await supabase.from('assignments').insert(payload).select().single()
     if (err) { setError(err.message); setSaving(false); return }
@@ -127,9 +130,23 @@ export default function NewAssignmentPage() {
                 className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Due Date *</label>
-              <input required type="date" value={form.due_date} onChange={e => setForm({ ...form, due_date: e.target.value })}
-                className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-sm font-medium text-gray-700">Due Date {!alwaysActive && '*'}</label>
+                <label className="flex items-center gap-1.5 cursor-pointer text-sm text-gray-500 select-none">
+                  <input type="checkbox" checked={alwaysActive} onChange={e => setAlwaysActive(e.target.checked)}
+                    className="w-4 h-4 text-blue-600 rounded" />
+                  Always Active
+                </label>
+              </div>
+              <input
+                required={!alwaysActive}
+                disabled={alwaysActive}
+                type="date"
+                value={alwaysActive ? '' : form.due_date}
+                onChange={e => setForm({ ...form, due_date: e.target.value })}
+                className={`w-full px-4 py-2.5 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${alwaysActive ? 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed' : 'border-gray-300'}`}
+              />
+              {alwaysActive && <p className="text-xs text-blue-600 mt-1">This assignment has no end date.</p>}
             </div>
           </div>
 
