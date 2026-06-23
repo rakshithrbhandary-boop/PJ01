@@ -130,7 +130,9 @@ export default function AssignmentDetailPage() {
   const isAssignedAM = isAssistantManager && (assignment.assigned_to as string) === currentProfile?.id
   const canAddTasks = isManager || isAssignedAM || isExecutive
 
-  const assignedToName = (assignment.assigned_to_profile as { full_name?: string } | null)?.full_name
+  const assignedToName =
+    otherAMs.find(a => a.id === (assignment.assigned_to as string))?.full_name
+    ?? (assignment.assigned_to_profile as { full_name?: string } | null)?.full_name
   const managerName = (assignment.manager as { full_name?: string })?.full_name
 
   // Group tasks by executive
