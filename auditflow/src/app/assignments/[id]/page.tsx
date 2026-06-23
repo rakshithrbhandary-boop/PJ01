@@ -61,7 +61,7 @@ export default function AssignmentDetailPage() {
       const [{ data: a }, { data: t }, { data: o }, { data: ex }, { data: ams }, { data: hist }] = await Promise.all([
         supabase.from('assignments').select('*, manager:profiles!assignments_manager_id_fkey(full_name), assigned_to_profile:profiles!assignments_assigned_to_fkey(full_name)').eq('id', id).single(),
         supabase.from('tasks').select('*').eq('assignment_id', id).order('created_at'),
-        supabase.from('observations').select('*, raiser:profiles(full_name)').eq('assignment_id', id).order('created_at', { ascending: false }),
+        supabase.from('observations').select('*').eq('assignment_id', id).order('created_at', { ascending: false }),
         supabase.from('profiles').select('id, full_name').eq('role', 'executive'),
         supabase.from('profiles').select('id, full_name').eq('role', 'assistant_manager'),
         supabase.from('assignment_handovers').select('*').eq('assignment_id', id).order('created_at'),
@@ -75,9 +75,18 @@ export default function AssignmentDetailPage() {
       const nameMap = Object.fromEntries((assigneeProfiles ?? []).map(p => [p.id, p.full_name]))
       const tasksWithNames = taskList.map((tk: Record<string, unknown>) => ({ ...tk, assignee: { full_name: nameMap[tk.assigned_to as string] ?? 'Unassigned' } }))
 
+      // Resolve observation raiser names separately
+      const obsList = o ?? []
+      const raiserIds = [...new Set(obsList.map((ob: Record<string, unknown>) => ob.raised_by as string).filter(Boolean))]
+      const { data: raiserProfiles } = raiserIds.length > 0
+        ? await supabase.from('profiles').select('id, full_name').in('id', raiserIds)
+        : { data: [] as { id: string; full_name: string }[] }
+      const raiserNameMap = Object.fromEntries((raiserProfiles ?? []).map(p => [p.id, p.full_name]))
+      const obsWithNames = obsList.map((ob: Record<string, unknown>) => ({ ...ob, raiser: { full_name: raiserNameMap[ob.raised_by as string] ?? '—' } }))
+
       setAssignment(a)
       setTasks(tasksWithNames)
-      setObservations(o ?? [])
+      setObservations(obsWithNames)
       setExecutives(ex ?? [])
       setOtherAMs(ams ?? [])
       setHandoverHistory(hist ?? [])
