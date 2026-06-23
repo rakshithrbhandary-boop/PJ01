@@ -209,7 +209,7 @@ export default function ObservationsPage() {
                           <p className="text-xs font-semibold text-gray-500 uppercase mb-3">Comments / Action Required</p>
                           <div className="space-y-2 mb-3">
                             {/* Legacy comment from old single-field system */}
-                            {(o.manager_input as string) && comments.length === 0 && (
+                            {(o.manager_input as string) && (
                               <div className="p-3 bg-white border border-gray-200 rounded-lg">
                                 <div className="flex items-center gap-2 mb-1">
                                   <span className="text-xs font-semibold text-gray-800">{(o.manager_input_by_name as string) || 'Management'}</span>
@@ -224,6 +224,7 @@ export default function ObservationsPage() {
                               </div>
                             )}
                             {!o.manager_input && comments.length === 0 && <p className="text-sm text-gray-400">No comments yet.</p>}
+
                             {comments.map(c => (
                               <div key={c.id} className="p-3 bg-white border border-gray-200 rounded-lg">
                                 <div className="flex items-center gap-2 mb-1">
