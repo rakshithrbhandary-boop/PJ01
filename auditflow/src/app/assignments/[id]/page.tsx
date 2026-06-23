@@ -60,14 +60,23 @@ export default function AssignmentDetailPage() {
       }
       const [{ data: a }, { data: t }, { data: o }, { data: ex }, { data: ams }, { data: hist }] = await Promise.all([
         supabase.from('assignments').select('*, manager:profiles!assignments_manager_id_fkey(full_name), assigned_to_profile:profiles!assignments_assigned_to_fkey(full_name)').eq('id', id).single(),
-        supabase.from('tasks').select('*, assignee:profiles(full_name)').eq('assignment_id', id).order('created_at'),
+        supabase.from('tasks').select('*').eq('assignment_id', id).order('created_at'),
         supabase.from('observations').select('*, raiser:profiles(full_name)').eq('assignment_id', id).order('created_at', { ascending: false }),
         supabase.from('profiles').select('id, full_name').eq('role', 'executive'),
         supabase.from('profiles').select('id, full_name').eq('role', 'assistant_manager'),
         supabase.from('assignment_handovers').select('*').eq('assignment_id', id).order('created_at'),
       ])
+      // Resolve task assignee names separately to avoid RLS join filtering
+      const taskList = t ?? []
+      const assigneeIds = [...new Set(taskList.map((tk: Record<string, unknown>) => tk.assigned_to as string).filter(Boolean))]
+      const { data: assigneeProfiles } = assigneeIds.length > 0
+        ? await supabase.from('profiles').select('id, full_name').in('id', assigneeIds)
+        : { data: [] as { id: string; full_name: string }[] }
+      const nameMap = Object.fromEntries((assigneeProfiles ?? []).map(p => [p.id, p.full_name]))
+      const tasksWithNames = taskList.map((tk: Record<string, unknown>) => ({ ...tk, assignee: { full_name: nameMap[tk.assigned_to as string] ?? 'Unassigned' } }))
+
       setAssignment(a)
-      setTasks(t ?? [])
+      setTasks(tasksWithNames)
       setObservations(o ?? [])
       setExecutives(ex ?? [])
       setOtherAMs(ams ?? [])

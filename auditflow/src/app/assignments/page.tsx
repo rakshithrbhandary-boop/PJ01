@@ -114,13 +114,20 @@ export default function AssignmentsPage() {
     setExpanded(prev => ({ ...prev, [assignmentId]: !isOpen }))
     if (!isOpen && !tasksByAssignment[assignmentId]) {
       setLoadingTasks(prev => ({ ...prev, [assignmentId]: true }))
-      const { data: tasks } = await supabase
+      const { data: tasksRaw } = await supabase
         .from('tasks')
-        .select('*, assignee:profiles(full_name)')
+        .select('*')
         .eq('assignment_id', assignmentId)
         .order('created_at')
-      const taskList = tasks ?? []
-      setTasksByAssignment(prev => ({ ...prev, [assignmentId]: taskList }))
+      const taskList = tasksRaw ?? []
+      // Fetch assignee names separately to avoid RLS join filtering
+      const assigneeIds = [...new Set(taskList.map(t => t.assigned_to as string).filter(Boolean))]
+      const { data: assigneeProfiles } = assigneeIds.length > 0
+        ? await supabase.from('profiles').select('id, full_name').in('id', assigneeIds)
+        : { data: [] }
+      const nameMap = Object.fromEntries((assigneeProfiles ?? []).map(p => [p.id, p.full_name]))
+      const tasksWithNames = taskList.map(t => ({ ...t, assignee: { full_name: nameMap[t.assigned_to as string] ?? 'Unassigned' } }))
+      setTasksByAssignment(prev => ({ ...prev, [assignmentId]: tasksWithNames }))
       const taskIds = taskList.map(t => t.id as string)
       if (taskIds.length > 0) {
         const { data: obsData } = await supabase
