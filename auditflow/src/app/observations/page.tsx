@@ -17,6 +17,12 @@ const STATUS_COLORS: Record<string, string> = {
   resolved: 'bg-green-100 text-green-800',
   closed: 'bg-gray-100 text-gray-800',
 }
+const ROLE_COLORS: Record<string, string> = {
+  manager: 'bg-purple-100 text-purple-700',
+  assistant_manager: 'bg-indigo-100 text-indigo-700',
+}
+
+type Comment = { id: string; comment: string; commenter_name: string; commenter_role: string; created_at: string }
 
 export default function ObservationsPage() {
   const [obs, setObs] = useState<Record<string, unknown>[]>([])
@@ -24,9 +30,9 @@ export default function ObservationsPage() {
   const [riskFilter, setRiskFilter] = useState('')
   const [profile, setProfile] = useState<Profile | null>(null)
   const [expanded, setExpanded] = useState<string | null>(null)
-  const [managerInputs, setManagerInputs] = useState<Record<string, string>>({})
-  const [savingInput, setSavingInput] = useState<string | null>(null)
-  const [savedInput, setSavedInput] = useState<string | null>(null)
+  const [commentsByObs, setCommentsByObs] = useState<Record<string, Comment[]>>({})
+  const [newComment, setNewComment] = useState<Record<string, string>>({})
+  const [savingComment, setSavingComment] = useState<string | null>(null)
   const [execResponses, setExecResponses] = useState<Record<string, string>>({})
   const [savingExec, setSavingExec] = useState<string | null>(null)
 
@@ -40,14 +46,10 @@ export default function ObservationsPage() {
   }, [])
 
   useEffect(() => {
-    let q = supabase.from('observations')
-      .select('*')
-      .order('created_at', { ascending: false })
+    let q = supabase.from('observations').select('*').order('created_at', { ascending: false })
     if (riskFilter) q = q.eq('risk_level', riskFilter)
-    q.then(async ({ data: obsData, error }) => {
-      console.log('obs query', obsData, error)
+    q.then(async ({ data: obsData }) => {
       if (!obsData) { setLoading(false); return }
-      // Fetch raiser names and assignment titles separately to avoid RLS join filtering
       const raisedByIds = [...new Set(obsData.map(o => o.raised_by).filter(Boolean))]
       const assignmentIds = [...new Set(obsData.map(o => o.assignment_id).filter(Boolean))]
       const [{ data: profilesData }, { data: assignmentsData }] = await Promise.all([
@@ -65,40 +67,32 @@ export default function ObservationsPage() {
     })
   }, [riskFilter])
 
-  function toggle(id: string, currentInput: string, currentExecResponse: string) {
+  async function toggleExpand(id: string, execResponse: string) {
     if (expanded === id) { setExpanded(null); return }
     setExpanded(id)
-    setManagerInputs(prev => ({ ...prev, [id]: prev[id] ?? currentInput ?? '' }))
-    setExecResponses(prev => ({ ...prev, [id]: prev[id] ?? currentExecResponse ?? '' }))
+    setExecResponses(prev => ({ ...prev, [id]: prev[id] ?? execResponse ?? '' }))
+    // Load comments for this observation
+    if (!commentsByObs[id]) {
+      const { data } = await supabase.from('observation_comments')
+        .select('*').eq('observation_id', id).order('created_at')
+      setCommentsByObs(prev => ({ ...prev, [id]: (data ?? []) as Comment[] }))
+    }
   }
 
-  async function saveExecResponse(obsId: string) {
-    setSavingExec(obsId)
-    await supabase.from('observations').update({ executive_response: execResponses[obsId] }).eq('id', obsId)
-    setObs(prev => prev.map(o => o.id === obsId ? { ...o, executive_response: execResponses[obsId] } : o))
-    setSavingExec(null)
-  }
-
-  async function saveManagerInput(obsId: string) {
-    if (!profile) return
-    setSavingInput(obsId)
-    const now = new Date().toISOString()
-    await supabase.from('observations').update({
-      manager_input: managerInputs[obsId],
-      manager_input_by_name: profile.full_name,
-      manager_input_by_role: profile.role,
-      manager_input_at: now,
-    }).eq('id', obsId)
-    setObs(prev => prev.map(o => o.id === obsId ? {
-      ...o,
-      manager_input: managerInputs[obsId],
-      manager_input_by_name: profile.full_name,
-      manager_input_by_role: profile.role,
-      manager_input_at: now,
-    } : o))
-    setSavingInput(null)
-    setSavedInput(obsId)
-    setTimeout(() => setSavedInput(null), 2000)
+  async function postComment(obsId: string) {
+    if (!profile || !newComment[obsId]?.trim()) return
+    setSavingComment(obsId)
+    const { data } = await supabase.from('observation_comments').insert({
+      observation_id: obsId,
+      comment: newComment[obsId].trim(),
+      commenter_name: profile.full_name,
+      commenter_role: profile.role,
+    }).select().single()
+    if (data) {
+      setCommentsByObs(prev => ({ ...prev, [obsId]: [...(prev[obsId] ?? []), data as Comment] }))
+      setNewComment(prev => ({ ...prev, [obsId]: '' }))
+    }
+    setSavingComment(null)
   }
 
   async function updateStatus(obsId: string, status: string) {
@@ -148,20 +142,19 @@ export default function ObservationsPage() {
                 <div className="text-xs font-medium text-gray-500 uppercase">Raised By</div>
               </div>
               {obs.map(o => {
-                const isOpen = expanded === (o.id as string)
+                const oId = o.id as string
+                const isOpen = expanded === oId
+                const comments = commentsByObs[oId] ?? []
                 return (
-                  <div key={o.id as string} className="border-b border-gray-50 last:border-0">
-                    {/* Row */}
+                  <div key={oId} className="border-b border-gray-50 last:border-0">
                     <div
                       className="grid grid-cols-[40px_1fr_180px_120px_110px_120px] px-4 py-4 items-center hover:bg-gray-50 cursor-pointer"
-                      onClick={() => toggle(o.id as string, o.manager_input as string, o.executive_response as string)}
+                      onClick={() => toggleExpand(oId, o.executive_response as string)}
                     >
                       <div className="flex items-center justify-center">
                         <button className="w-6 h-6 flex items-center justify-center rounded hover:bg-gray-200 transition-colors text-gray-400">
-                          <svg
-                            className={`w-3.5 h-3.5 transition-transform duration-200 ${isOpen ? 'rotate-90' : ''}`}
-                            fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                          >
+                          <svg className={`w-3.5 h-3.5 transition-transform duration-200 ${isOpen ? 'rotate-90' : ''}`}
+                            fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                           </svg>
                         </button>
@@ -170,7 +163,7 @@ export default function ObservationsPage() {
                         <p className="font-medium text-gray-900">{o.title as string}</p>
                         <p className="text-xs text-gray-400 truncate max-w-xs">{o.description as string}</p>
                       </div>
-                      <div className="text-sm text-gray-500">{(o._assignmentTitle as string) ?? '—'}</div>
+                      <div className="text-sm text-gray-500">{o._assignmentTitle as string}</div>
                       <div>
                         <span className={`text-xs font-medium px-2.5 py-1 rounded-full capitalize ${RISK_COLORS[o.risk_level as string] ?? ''}`}>
                           {o.risk_level as string}
@@ -181,28 +174,27 @@ export default function ObservationsPage() {
                           {(o.status as string).replace('_', ' ')}
                         </span>
                       </div>
-                      <div className="text-sm text-gray-600">{(o._raisedByName as string) ?? '—'}</div>
+                      <div className="text-sm text-gray-600">{o._raisedByName as string}</div>
                     </div>
 
-                    {/* Expanded Panel */}
                     {isOpen && (
                       <div className="bg-gray-50 border-t border-gray-100 px-10 py-5 space-y-5">
-                        {/* Full description */}
+                        {/* Description */}
                         <div>
                           <p className="text-xs font-semibold text-gray-500 uppercase mb-1">Description</p>
                           <p className="text-sm text-gray-700">{o.description as string}</p>
                         </div>
 
-                        {/* Status + Risk controls for manager/AM */}
+                        {/* Status control for manager/AM */}
                         {canComment && (
-                          <div className="grid grid-cols-2 gap-4">
+                          <div className="flex items-center gap-4">
                             <div>
                               <p className="text-xs font-semibold text-gray-500 uppercase mb-1">Update Status</p>
                               <select
                                 value={o.status as string}
-                                onChange={e => { e.stopPropagation(); updateStatus(o.id as string, e.target.value) }}
+                                onChange={e => { e.stopPropagation(); updateStatus(oId, e.target.value) }}
                                 onClick={e => e.stopPropagation()}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                               >
                                 <option value="open">Open</option>
                                 <option value="in_progress">In Progress</option>
@@ -210,131 +202,86 @@ export default function ObservationsPage() {
                                 <option value="closed">Closed</option>
                               </select>
                             </div>
-                            <div>
-                              <p className="text-xs font-semibold text-gray-500 uppercase mb-1">Risk Level</p>
-                              <span className={`inline-block text-xs font-medium px-2.5 py-1 rounded-full capitalize mt-1 ${RISK_COLORS[o.risk_level as string] ?? ''}`}>
-                                {o.risk_level as string}
-                              </span>
+                          </div>
+                        )}
+
+                        {/* Comments thread */}
+                        <div>
+                          <p className="text-xs font-semibold text-gray-500 uppercase mb-3">Comments / Action Required</p>
+                          <div className="space-y-2 mb-3">
+                            {comments.length === 0 && <p className="text-sm text-gray-400">No comments yet.</p>}
+                            {comments.map(c => (
+                              <div key={c.id} className="p-3 bg-white border border-gray-200 rounded-lg">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <span className="text-xs font-semibold text-gray-800">{c.commenter_name}</span>
+                                  <span className={`text-xs px-2 py-0.5 rounded-full capitalize ${ROLE_COLORS[c.commenter_role] ?? 'bg-gray-100 text-gray-600'}`}>
+                                    {c.commenter_role.replace('_', ' ')}
+                                  </span>
+                                  <span className="text-xs text-gray-400">· {new Date(c.created_at).toLocaleString()}</span>
+                                </div>
+                                <p className="text-sm text-gray-700">{c.comment}</p>
+                              </div>
+                            ))}
+                          </div>
+                          {canComment && (
+                            <div onClick={e => e.stopPropagation()}>
+                              <textarea
+                                value={newComment[oId] ?? ''}
+                                onChange={e => setNewComment(prev => ({ ...prev, [oId]: e.target.value }))}
+                                rows={2}
+                                placeholder="Add a comment or action note..."
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                              />
+                              <button
+                                onClick={() => postComment(oId)}
+                                disabled={savingComment === oId || !newComment[oId]?.trim()}
+                                className="mt-2 bg-blue-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+                              >
+                                {savingComment === oId ? 'Posting...' : 'Post Comment'}
+                              </button>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Executive acknowledgement — shown when there are comments */}
+                        {comments.length > 0 && !canComment && (
+                          <div className="border-t border-gray-200 pt-4">
+                            <p className="text-xs font-semibold text-gray-500 uppercase mb-2">Your Acknowledgement</p>
+                            <div className="flex items-center gap-3" onClick={e => e.stopPropagation()}>
+                              <select
+                                value={execResponses[oId] ?? (o.executive_response as string) ?? ''}
+                                onChange={async e => {
+                                  const val = e.target.value
+                                  setExecResponses(prev => ({ ...prev, [oId]: val }))
+                                  setSavingExec(oId)
+                                  await supabase.from('observations').update({ executive_response: val }).eq('id', oId)
+                                  setObs(prev => prev.map(ob => ob.id === oId ? { ...ob, executive_response: val } : ob))
+                                  setSavingExec(null)
+                                }}
+                                className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              >
+                                <option value="">— Select response —</option>
+                                <option value="acknowledged">✓ Acknowledged</option>
+                                <option value="in_progress">⏳ Working on it</option>
+                                <option value="clarification_needed">❓ Clarification Needed</option>
+                                <option value="disagree">✗ Disagree</option>
+                              </select>
+                              {savingExec === oId && <span className="text-gray-400 text-sm">Saving...</span>}
+                              {execResponses[oId] && savingExec !== oId && <span className="text-green-600 text-sm">✓ Saved</span>}
                             </div>
                           </div>
                         )}
 
-                        {/* Comments section */}
-                        <div>
-                          <p className="text-xs font-semibold text-gray-500 uppercase mb-2">
-                            Comments / Action Required
-                          </p>
-                          {canComment ? (
-                            <>
-                              {/* Show existing comment with attribution */}
-                              {(o.manager_input as string) && (
-                                <div className="mb-3 p-3 bg-white border border-gray-200 rounded-lg">
-                                  <div className="flex items-center gap-2 mb-1">
-                                    <span className="text-xs font-semibold text-gray-800">
-                                      {(o.manager_input_by_name as string) ?? 'Unknown'}
-                                    </span>
-                                    <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 capitalize">
-                                      {((o.manager_input_by_role as string) ?? '').replace('_', ' ')}
-                                    </span>
-                                    {(o.manager_input_at as string) && (
-                                      <span className="text-xs text-gray-400">
-                                        · {new Date(o.manager_input_at as string).toLocaleString()}
-                                      </span>
-                                    )}
-                                  </div>
-                                  <p className="text-sm text-gray-700">{o.manager_input as string}</p>
-                                </div>
-                              )}
-                              <textarea
-                                value={managerInputs[o.id as string] ?? ''}
-                                onChange={e => setManagerInputs(prev => ({ ...prev, [o.id as string]: e.target.value }))}
-                                onClick={e => e.stopPropagation()}
-                                rows={3}
-                                placeholder="Add action required, management response, or follow-up notes..."
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-                              />
-                              <div className="flex items-center gap-3 mt-2">
-                                <button
-                                  onClick={e => { e.stopPropagation(); saveManagerInput(o.id as string) }}
-                                  disabled={savingInput === (o.id as string)}
-                                  className="bg-blue-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
-                                >
-                                  {savingInput === (o.id as string) ? 'Saving...' : 'Save Comment'}
-                                </button>
-                                {savedInput === (o.id as string) && <span className="text-green-600 text-sm">✓ Saved</span>}
-                              </div>
-                            </>
-                          ) : (
-                            (o.manager_input as string) ? (
-                              <div className="p-3 bg-white border border-gray-200 rounded-lg">
-                                <div className="flex items-center gap-2 mb-1">
-                                  <span className="text-xs font-semibold text-gray-800">
-                                    {(o.manager_input_by_name as string) ?? 'Management'}
-                                  </span>
-                                  <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 capitalize">
-                                    {((o.manager_input_by_role as string) ?? '').replace('_', ' ')}
-                                  </span>
-                                  {(o.manager_input_at as string) && (
-                                    <span className="text-xs text-gray-400">
-                                      · {new Date(o.manager_input_at as string).toLocaleString()}
-                                    </span>
-                                  )}
-                                </div>
-                                <p className="text-sm text-gray-700">{o.manager_input as string}</p>
-                              </div>
-                            ) : (
-                              <p className="text-sm text-gray-400">No comments yet.</p>
-                            )
-                          )}
-                        </div>
-
-                        {/* Executive acknowledgement */}
-                        {(o.manager_input as string) && (
+                        {/* Show exec response to manager/AM */}
+                        {canComment && (o.executive_response as string) && (
                           <div className="border-t border-gray-200 pt-4">
-                            <p className="text-xs font-semibold text-gray-500 uppercase mb-2">Executive Acknowledgement</p>
-                            {!canComment ? (
-                              <div className="flex items-center gap-3" onClick={e => e.stopPropagation()}>
-                                <select
-                                  value={execResponses[o.id as string] ?? ''}
-                                  onChange={async e => {
-                                    const val = e.target.value
-                                    setExecResponses(prev => ({ ...prev, [o.id as string]: val }))
-                                    setSavingExec(o.id as string)
-                                    await supabase.from('observations').update({ executive_response: val }).eq('id', o.id as string)
-                                    setObs(prev => prev.map(ob => ob.id === o.id ? { ...ob, executive_response: val } : ob))
-                                    setSavingExec(null)
-                                  }}
-                                  className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                >
-                                  <option value="">— Select response —</option>
-                                  <option value="acknowledged">✓ Acknowledged</option>
-                                  <option value="in_progress">⏳ Working on it</option>
-                                  <option value="clarification_needed">❓ Clarification Needed</option>
-                                  <option value="disagree">✗ Disagree</option>
-                                </select>
-                                {savingExec === (o.id as string) && <span className="text-gray-400 text-sm">Saving...</span>}
-                                {execResponses[o.id as string] && savingExec !== (o.id as string) && <span className="text-green-600 text-sm">✓ Saved</span>}
-                              </div>
-                            ) : (
-                              (() => {
-                                const resp = o.executive_response as string
-                                const labels: Record<string, string> = {
-                                  acknowledged: '✓ Acknowledged',
-                                  in_progress: '⏳ Working on it',
-                                  clarification_needed: '❓ Clarification Needed',
-                                  disagree: '✗ Disagree',
-                                }
-                                const colors: Record<string, string> = {
-                                  acknowledged: 'bg-green-100 text-green-800',
-                                  in_progress: 'bg-blue-100 text-blue-800',
-                                  clarification_needed: 'bg-yellow-100 text-yellow-800',
-                                  disagree: 'bg-red-100 text-red-800',
-                                }
-                                return resp
-                                  ? <span className={`text-xs font-medium px-3 py-1 rounded-full ${colors[resp] ?? 'bg-gray-100 text-gray-700'}`}>{labels[resp] ?? resp}</span>
-                                  : <span className="text-sm text-gray-400">No response yet</span>
-                              })()
-                            )}
+                            <p className="text-xs font-semibold text-gray-500 uppercase mb-2">Executive Response</p>
+                            {(() => {
+                              const resp = o.executive_response as string
+                              const labels: Record<string, string> = { acknowledged: '✓ Acknowledged', in_progress: '⏳ Working on it', clarification_needed: '❓ Clarification Needed', disagree: '✗ Disagree' }
+                              const colors: Record<string, string> = { acknowledged: 'bg-green-100 text-green-800', in_progress: 'bg-blue-100 text-blue-800', clarification_needed: 'bg-yellow-100 text-yellow-800', disagree: 'bg-red-100 text-red-800' }
+                              return <span className={`text-xs font-medium px-3 py-1 rounded-full ${colors[resp] ?? 'bg-gray-100 text-gray-700'}`}>{labels[resp] ?? resp}</span>
+                            })()}
                           </div>
                         )}
                       </div>
