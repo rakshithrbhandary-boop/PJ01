@@ -29,7 +29,7 @@ export default function NewAssignmentPage() {
   const [form, setForm] = useState({
     title: '', type: 'internal_audit', status: 'planning',
     client_name: '', start_date: '', due_date: '', description: '',
-    assigned_to: '', recurring_frequency: '',
+    assigned_to: '',
   })
   const [isDailyAudit, setIsDailyAudit] = useState(false)
   const [scopes, setScopes] = useState<Scope[]>([{ name: '', verification_frequency: 'Daily', reporting_frequency: 'Daily' }])
@@ -66,7 +66,6 @@ export default function NewAssignmentPage() {
       ...form,
       manager_id: userId,
       assigned_to: form.assigned_to || null,
-      recurring_frequency: form.recurring_frequency || null,
       daily_audit_scopes: isDailyAudit ? scopes.filter(s => s.name.trim()) : null,
     }
     const { data, error: err } = await supabase.from('assignments').insert(payload).select().single()
@@ -102,15 +101,6 @@ export default function NewAssignmentPage() {
                 {STATUS_OPTIONS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
               </select>
             </div>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Recurring Frequency</label>
-            <select value={form.recurring_frequency} onChange={e => setForm({ ...form, recurring_frequency: e.target.value })}
-              className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
-              <option value="">— One-time / Not recurring —</option>
-              {FREQUENCY_OPTIONS.map(f => <option key={f} value={f}>{f}</option>)}
-            </select>
           </div>
 
           <div>
