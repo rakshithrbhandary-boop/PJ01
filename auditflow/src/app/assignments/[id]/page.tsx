@@ -127,10 +127,13 @@ export default function AssignmentDetailPage() {
   const isManager = currentProfile?.role === 'manager'
   const isAssistantManager = currentProfile?.role === 'assistant_manager'
   const isExecutive = currentProfile?.role === 'executive'
-  const isAssignedAM = isAssistantManager && (assignment.assigned_to as string) === currentProfile?.id
+  const lastHandover = handoverHistory.length > 0 ? handoverHistory[handoverHistory.length - 1] : null
+  const currentHandlerId = lastHandover
+    ? (lastHandover.to_am_id as string)
+    : (assignment.assigned_to as string)
+  const isAssignedAM = isAssistantManager && currentHandlerId === currentProfile?.id
   const canAddTasks = isManager || isAssignedAM || isExecutive
 
-  const lastHandover = handoverHistory.length > 0 ? handoverHistory[handoverHistory.length - 1] : null
   const assignedToName =
     (lastHandover ? (lastHandover.to_am_name as string) : null)
     ?? otherAMs.find(a => a.id === (assignment.assigned_to as string))?.full_name
