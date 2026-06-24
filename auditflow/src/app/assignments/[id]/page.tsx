@@ -138,6 +138,15 @@ export default function AssignmentDetailPage() {
     return top.map(a => ({ ...a, subAreas: child.filter(c => c.parent_id === a.id) }))
   }
 
+  async function deleteTask(taskId: string, parentId?: string) {
+    if (!confirm('Delete this item? This cannot be undone.')) return
+    await supabase.from('tasks').delete().eq('id', taskId)
+    setAreas(prev => {
+      if (!parentId) return prev.filter(a => (a.id as string) !== taskId)
+      return prev.map(a => a.id === parentId ? { ...a, subAreas: (a.subAreas ?? []).filter(s => (s.id as string) !== taskId) } : a)
+    })
+  }
+
   async function addArea() {
     if (!areaForm.title || !areaForm.due_date) return
     if (!isExecutive && !areaForm.assigned_to) return
@@ -878,6 +887,12 @@ export default function AssignmentDetailPage() {
                                 {showSubAreaForm === aId ? '✕' : '+ Sub-area'}
                               </button>
                             )}
+                            {canManage && !isPreviousAM && (
+                              <button onClick={() => deleteTask(aId)}
+                                className="text-xs text-red-500 border border-red-200 px-2 py-0.5 rounded hover:bg-red-50">
+                                Delete
+                              </button>
+                            )}
                           </div>
                         </div>
 
@@ -955,6 +970,12 @@ export default function AssignmentDetailPage() {
                                       <button onClick={() => { setDelegatingSubArea(isBeingDelegated ? null : sId); setDelegateTo(''); setDelegateNote('') }}
                                         className="text-xs text-purple-600 border border-purple-200 px-2 py-0.5 rounded hover:bg-purple-50">
                                         {isBeingDelegated ? 'Cancel' : 'Delegate'}
+                                      </button>
+                                    )}
+                                    {canManage && !isPreviousAM && (
+                                      <button onClick={() => deleteTask(sId, aId)}
+                                        className="text-xs text-red-500 border border-red-200 px-2 py-0.5 rounded hover:bg-red-50">
+                                        Delete
                                       </button>
                                     )}
                                   </div>
