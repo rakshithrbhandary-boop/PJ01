@@ -175,8 +175,14 @@ export default function AssignmentsPage() {
         assignmentsData = [...(direct ?? []), ...extra]
 
       } else if (p?.role === 'executive') {
-        const { data: myTasks } = await supabase.from('tasks').select('assignment_id').eq('assigned_to', user.id)
-        const assignmentIds = [...new Set((myTasks ?? []).map(t => t.assignment_id as string))]
+        const [{ data: myTasks }, { data: myExecRows }] = await Promise.all([
+          supabase.from('tasks').select('assignment_id').eq('assigned_to', user.id),
+          supabase.from('assignment_executives').select('assignment_id').eq('executive_id', user.id),
+        ])
+        const assignmentIds = [...new Set([
+          ...(myTasks ?? []).map(t => t.assignment_id as string),
+          ...(myExecRows ?? []).map(r => r.assignment_id as string),
+        ])]
         if (assignmentIds.length > 0) {
           const { data } = await supabase
             .from('assignments')
