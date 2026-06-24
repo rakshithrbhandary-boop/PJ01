@@ -67,6 +67,13 @@ export default function AssignmentDetailPage() {
   const [showReturnModal, setShowReturnModal] = useState(false)
   const [returnReason, setReturnReason] = useState('')
   const [savingReturn, setSavingReturn] = useState(false)
+
+  // Executive team modal
+  const [showExecModal, setShowExecModal] = useState(false)
+  const [assignmentExecutives, setAssignmentExecutives] = useState<{ id: string; executive_id: string }[]>([])
+  const [allExecWorkload, setAllExecWorkload] = useState<Record<string, { activeAreas: number; latestDue: string | null }>>({})
+  const [addingExec, setAddingExec] = useState<string | null>(null)
+  const [execSearch, setExecSearch] = useState('')
   const [processingReturn, setProcessingReturn] = useState<string | null>(null)
 
   useEffect(() => {
@@ -76,7 +83,7 @@ export default function AssignmentDetailPage() {
         const { data: p } = await supabase.from('profiles').select('*').eq('id', user.id).single()
         setCurrentProfile(p)
       }
-      const [{ data: a }, { data: allTasks }, { data: o }, { data: ex }, { data: ams }, { data: hist }, { data: retReqs }] = await Promise.all([
+      const [{ data: a }, { data: allTasks }, { data: o }, { data: ex }, { data: ams }, { data: hist }, { data: retReqs }, { data: assignedExecs }] = await Promise.all([
         supabase.from('assignments').select('*, manager:profiles!assignments_manager_id_fkey(full_name), assigned_to_profile:profiles!assignments_assigned_to_fkey(full_name)').eq('id', id).single(),
         supabase.from('tasks').select('*').eq('assignment_id', id).order('created_at'),
         supabase.from('observations').select('*').eq('assignment_id', id).order('created_at', { ascending: false }),
@@ -84,6 +91,7 @@ export default function AssignmentDetailPage() {
         supabase.from('profiles').select('id, full_name').eq('role', 'assistant_manager'),
         supabase.from('assignment_handovers').select('*').eq('assignment_id', id).order('created_at'),
         supabase.from('assignment_return_requests').select('*').eq('assignment_id', id).order('created_at', { ascending: false }),
+        supabase.from('assignment_executives').select('id, executive_id').eq('assignment_id', id),
       ])
       setAssignment(a)
       setObservations(o ?? [])
@@ -91,6 +99,7 @@ export default function AssignmentDetailPage() {
       setOtherAMs(ams ?? [])
       setHandoverHistory(hist ?? [])
       setReturnRequests(retReqs ?? [])
+      setAssignmentExecutives(assignedExecs ?? [])
 
       // Resolve assignee names
       const taskList = allTasks ?? []
@@ -264,6 +273,42 @@ export default function AssignmentDetailPage() {
     setProcessingReturn(null)
   }
 
+  async function openExecModal() {
+    setShowExecModal(true)
+    // Fetch workload: all tasks across all assignments for each executive
+    const { data: allExecTasks } = await supabase
+      .from('tasks')
+      .select('assigned_to, status, due_date, assignment_id')
+      .in('assigned_to', executives.map(e => e.id))
+    const workload: Record<string, { activeAreas: number; latestDue: string | null }> = {}
+    for (const ex of executives) {
+      const myTasks = (allExecTasks ?? []).filter(t => t.assigned_to === ex.id && t.status !== 'completed')
+      const dues = myTasks.map(t => t.due_date as string).filter(Boolean).sort()
+      workload[ex.id] = { activeAreas: myTasks.length, latestDue: dues[dues.length - 1] ?? null }
+    }
+    setAllExecWorkload(workload)
+  }
+
+  async function addExecToAssignment(execId: string) {
+    setAddingExec(execId)
+    const { data } = await supabase.from('assignment_executives').insert({
+      assignment_id: id as string,
+      executive_id: execId,
+      added_by: currentProfile?.id,
+    }).select('id, executive_id').single()
+    if (data) setAssignmentExecutives(prev => [...prev, data])
+    setAddingExec(null)
+  }
+
+  async function removeExecFromAssignment(execId: string) {
+    const row = assignmentExecutives.find(r => r.executive_id === execId)
+    if (!row) return
+    setAddingExec(execId)
+    await supabase.from('assignment_executives').delete().eq('id', row.id)
+    setAssignmentExecutives(prev => prev.filter(r => r.executive_id !== execId))
+    setAddingExec(null)
+  }
+
   if (loading) return <AppShell><div className="py-12 text-center text-gray-400">Loading...</div></AppShell>
   if (!assignment) return <AppShell><div className="py-12 text-center text-gray-400">Assignment not found</div></AppShell>
 
@@ -431,19 +476,31 @@ export default function AssignmentDetailPage() {
               <div className="flex-1 mt-4 border-t-2 border-dashed border-gray-200 relative">
                 <span className="absolute -top-2 left-1/2 -translate-x-1/2 text-xs text-gray-400 bg-white px-1">areas to</span>
               </div>
-              <div className="flex gap-3">
+              <div className="flex gap-3 items-start">
                 {involvedExecutives.length === 0 ? (
-                  <div className="text-center">
-                    <div className="w-10 h-10 bg-gray-200 rounded-full flex items-center justify-center text-gray-400 text-sm mx-auto mb-1">?</div>
-                    <p className="text-xs text-gray-400">No executives yet</p>
+                  <div className="text-center cursor-pointer group" onClick={canManage ? openExecModal : undefined}>
+                    <div className="w-10 h-10 bg-gray-200 group-hover:bg-blue-100 rounded-full flex items-center justify-center text-gray-400 group-hover:text-blue-500 text-sm mx-auto mb-1 transition-colors">?</div>
+                    <p className="text-xs text-gray-400 group-hover:text-blue-500">
+                      {canManage ? '+ Add Executives' : 'No executives yet'}
+                    </p>
                   </div>
-                ) : involvedExecutives.map(ex => (
-                  <div key={ex.id} className="text-center">
-                    <div className="w-10 h-10 bg-emerald-500 rounded-full flex items-center justify-center text-white font-bold text-sm mx-auto mb-1">{ex.full_name[0].toUpperCase()}</div>
-                    <p className="text-xs font-medium text-gray-700">{ex.full_name}</p>
-                    <p className="text-xs text-gray-400">Executive</p>
-                  </div>
-                ))}
+                ) : (
+                  <>
+                    {involvedExecutives.map(ex => (
+                      <div key={ex.id} className="text-center">
+                        <div className="w-10 h-10 bg-emerald-500 rounded-full flex items-center justify-center text-white font-bold text-sm mx-auto mb-1">{ex.full_name[0].toUpperCase()}</div>
+                        <p className="text-xs font-medium text-gray-700">{ex.full_name}</p>
+                        <p className="text-xs text-gray-400">Executive</p>
+                      </div>
+                    ))}
+                    {canManage && (
+                      <button onClick={openExecModal}
+                        className="w-10 h-10 border-2 border-dashed border-gray-300 rounded-full flex items-center justify-center text-gray-400 hover:border-blue-400 hover:text-blue-500 text-sm transition-colors mt-0.5">
+                        +
+                      </button>
+                    )}
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -765,6 +822,83 @@ export default function AssignmentDetailPage() {
               <button onClick={() => { setShowReturnModal(false); setReturnReason('') }}
                 className="flex-1 text-gray-600 border border-gray-300 py-2 rounded-lg text-sm font-medium hover:bg-gray-50">
                 Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Executive Team Modal */}
+      {showExecModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg mx-4 flex flex-col max-h-[80vh]">
+            <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-bold text-gray-900">Executive Team</h2>
+                <p className="text-sm text-gray-500 mt-0.5">Add or remove executives from this assignment</p>
+              </div>
+              <button onClick={() => setShowExecModal(false)} className="text-gray-400 hover:text-gray-600 text-xl font-light leading-none">×</button>
+            </div>
+            <div className="px-6 py-3 border-b border-gray-100">
+              <input
+                placeholder="Search executives..."
+                value={execSearch}
+                onChange={e => setExecSearch(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <div className="overflow-y-auto flex-1 divide-y divide-gray-50">
+              {executives
+                .filter(ex => ex.full_name.toLowerCase().includes(execSearch.toLowerCase()))
+                .map(ex => {
+                  const isAdded = assignmentExecutives.some(r => r.executive_id === ex.id)
+                  const wl = allExecWorkload[ex.id]
+                  return (
+                    <div key={ex.id} className="px-6 py-4 flex items-center gap-4">
+                      <div className="w-9 h-9 bg-emerald-500 rounded-full flex items-center justify-center text-white font-bold text-sm flex-shrink-0">
+                        {ex.full_name[0].toUpperCase()}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-gray-900">{ex.full_name}</p>
+                        <div className="flex items-center gap-3 text-xs text-gray-500 mt-0.5">
+                          {wl ? (
+                            <>
+                              <span>{wl.activeAreas} active area{wl.activeAreas !== 1 ? 's' : ''}</span>
+                              {wl.latestDue && <span>· Available after {wl.latestDue}</span>}
+                            </>
+                          ) : (
+                            <span className="text-gray-300">Loading workload...</span>
+                          )}
+                        </div>
+                      </div>
+                      <div>
+                        {isAdded ? (
+                          <button
+                            onClick={() => removeExecFromAssignment(ex.id)}
+                            disabled={addingExec === ex.id}
+                            className="text-xs font-medium text-red-600 border border-red-200 px-3 py-1.5 rounded-lg hover:bg-red-50 disabled:opacity-50">
+                            {addingExec === ex.id ? '...' : 'Remove'}
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => addExecToAssignment(ex.id)}
+                            disabled={addingExec === ex.id}
+                            className="text-xs font-medium text-blue-600 border border-blue-200 px-3 py-1.5 rounded-lg hover:bg-blue-50 disabled:opacity-50">
+                            {addingExec === ex.id ? 'Adding...' : '+ Add'}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              {executives.filter(ex => ex.full_name.toLowerCase().includes(execSearch.toLowerCase())).length === 0 && (
+                <div className="px-6 py-10 text-center text-gray-400 text-sm">No executives found</div>
+              )}
+            </div>
+            <div className="px-6 py-3 border-t border-gray-100">
+              <button onClick={() => setShowExecModal(false)}
+                className="w-full text-sm text-gray-600 border border-gray-300 py-2 rounded-lg hover:bg-gray-50">
+                Done
               </button>
             </div>
           </div>
