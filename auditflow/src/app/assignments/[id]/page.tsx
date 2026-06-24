@@ -328,37 +328,35 @@ export default function AssignmentDetailPage() {
     setAddingExec(null)
   }
 
-  function downloadAreaExcel() {
-    const wb = XLSX.utils.book_new()
-
-    // Main data sheet
-    const rows: unknown[][] = [
-      ['Type', 'ID (do not edit)', 'Title', 'Assigned To', 'Status', 'Priority', 'Due Date (YYYY-MM-DD)'],
-    ]
-    for (const area of areas) {
-      rows.push(['Area', area.id, area.title, area._assigneeName, area.status, area.priority, area.due_date])
-      for (const sub of area.subAreas ?? []) {
-        rows.push(['Sub-Area', sub.id, sub.title, sub._assigneeName, sub.status, sub.priority, sub.due_date])
-      }
+  async function downloadAreaExcel() {
+    const payload = {
+      assignmentTitle: assignment?.title as string ?? 'assignment',
+      executives,
+      areas: areas.map(area => ({
+        id: area.id as string,
+        title: area.title as string,
+        assigneeName: area._assigneeName as string,
+        status: area.status as string,
+        priority: area.priority as string,
+        due_date: area.due_date as string,
+        subAreas: (area.subAreas ?? []).map(sub => ({
+          id: sub.id as string,
+          title: sub.title as string,
+          assigneeName: sub._assigneeName as string,
+          status: sub.status as string,
+          priority: sub.priority as string,
+          due_date: sub.due_date as string,
+        })),
+      })),
     }
-    const ws = XLSX.utils.aoa_to_sheet(rows)
-    ws['!cols'] = [{ wch: 10 }, { wch: 38 }, { wch: 30 }, { wch: 20 }, { wch: 14 }, { wch: 10 }, { wch: 16 }]
-
-    // Reference sheet with valid values
-    const execNames = executives.map(e => e.full_name)
-    const refData = [
-      ['Valid Status Values', 'Valid Priority Values', 'Valid Assigned To (exact name)'],
-      ['not_started', 'low', execNames[0] ?? ''],
-      ['in_progress', 'medium', execNames[1] ?? ''],
-      ['completed', 'high', execNames[2] ?? ''],
-      ['overdue', '', execNames[3] ?? ''],
-    ]
-    const wsRef = XLSX.utils.aoa_to_sheet(refData)
-    wsRef['!cols'] = [{ wch: 20 }, { wch: 20 }, { wch: 25 }]
-
-    XLSX.utils.book_append_sheet(wb, ws, 'Areas')
-    XLSX.utils.book_append_sheet(wb, wsRef, 'Reference')
-    XLSX.writeFile(wb, `${assignment?.title as string ?? 'assignment'}-areas.xlsx`)
+    const res = await fetch('/api/excel-areas', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${payload.assignmentTitle}-areas.xlsx`
+    a.click()
+    URL.revokeObjectURL(url)
   }
 
   async function handleExcelUpload(e: React.ChangeEvent<HTMLInputElement>) {
@@ -373,11 +371,12 @@ export default function AssignmentDetailPage() {
 
     const updates: PendingUpdate[] = []
     for (const row of raw) {
-      const rowId = row['ID (do not edit)']?.trim()
-      if (!rowId || row['Type'] === 'Type') continue
+      const rowId = row['ID']?.trim()
+      if (!rowId) continue
 
       let current: AreaRow | undefined
       let parentId: string | undefined
+      const rowType: 'Area' | 'Sub-Area' = row['Sub-Area']?.trim() ? 'Sub-Area' : 'Area'
       for (const area of areas) {
         if ((area.id as string) === rowId) { current = area; break }
         for (const sub of area.subAreas ?? []) {
@@ -388,12 +387,9 @@ export default function AssignmentDetailPage() {
       if (!current) continue
 
       const changes: Record<string, string> = {}
-      const newAssignee = row['Assigned To']?.trim()
+      const newAssignee = row['Assigned To Executive']?.trim()
       const exec = executives.find(e => e.full_name === newAssignee)
       if (exec && exec.id !== (current.assigned_to as string)) changes.assigned_to = exec.id
-
-      const statusVal = row['Status']?.trim()
-      if (statusVal && statusVal !== (current.status as string)) changes.status = statusVal
 
       const priorityVal = row['Priority']?.trim()
       if (priorityVal && priorityVal !== (current.priority as string)) changes.priority = priorityVal
@@ -402,13 +398,7 @@ export default function AssignmentDetailPage() {
       if (dueVal && dueVal !== (current.due_date as string)) changes.due_date = dueVal
 
       if (Object.keys(changes).length > 0) {
-        updates.push({
-          id: rowId,
-          type: row['Type'] as 'Area' | 'Sub-Area',
-          title: current.title as string,
-          changes,
-          parentId,
-        })
+        updates.push({ id: rowId, type: rowType, title: current.title as string, changes, parentId })
       }
     }
 
