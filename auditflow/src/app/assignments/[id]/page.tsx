@@ -1,10 +1,11 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import AppShell from '@/components/AppShell'
 import { supabase } from '@/lib/supabase'
 import type { Profile } from '@/lib/supabase'
+import * as XLSX from 'xlsx'
 
 const STATUS_COLORS: Record<string, string> = {
   planning: 'bg-yellow-100 text-yellow-800', in_progress: 'bg-blue-100 text-blue-800',
@@ -76,6 +77,13 @@ export default function AssignmentDetailPage() {
   const [execSearch, setExecSearch] = useState('')
   const [execError, setExecError] = useState<string | null>(null)
   const [processingReturn, setProcessingReturn] = useState<string | null>(null)
+
+  // Bulk Excel update
+  type PendingUpdate = { id: string; type: 'Area' | 'Sub-Area'; title: string; changes: Record<string, string>; parentId?: string }
+  const [pendingUpdates, setPendingUpdates] = useState<PendingUpdate[]>([])
+  const [showUploadPreview, setShowUploadPreview] = useState(false)
+  const [applyingUpdates, setApplyingUpdates] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     async function load() {
@@ -320,6 +328,121 @@ export default function AssignmentDetailPage() {
     setAddingExec(null)
   }
 
+  function downloadAreaExcel() {
+    const wb = XLSX.utils.book_new()
+
+    // Main data sheet
+    const rows: unknown[][] = [
+      ['Type', 'ID (do not edit)', 'Title', 'Assigned To', 'Status', 'Priority', 'Due Date (YYYY-MM-DD)'],
+    ]
+    for (const area of areas) {
+      rows.push(['Area', area.id, area.title, area._assigneeName, area.status, area.priority, area.due_date])
+      for (const sub of area.subAreas ?? []) {
+        rows.push(['Sub-Area', sub.id, sub.title, sub._assigneeName, sub.status, sub.priority, sub.due_date])
+      }
+    }
+    const ws = XLSX.utils.aoa_to_sheet(rows)
+    ws['!cols'] = [{ wch: 10 }, { wch: 38 }, { wch: 30 }, { wch: 20 }, { wch: 14 }, { wch: 10 }, { wch: 16 }]
+
+    // Reference sheet with valid values
+    const execNames = executives.map(e => e.full_name)
+    const refData = [
+      ['Valid Status Values', 'Valid Priority Values', 'Valid Assigned To (exact name)'],
+      ['not_started', 'low', execNames[0] ?? ''],
+      ['in_progress', 'medium', execNames[1] ?? ''],
+      ['completed', 'high', execNames[2] ?? ''],
+      ['overdue', '', execNames[3] ?? ''],
+    ]
+    const wsRef = XLSX.utils.aoa_to_sheet(refData)
+    wsRef['!cols'] = [{ wch: 20 }, { wch: 20 }, { wch: 25 }]
+
+    XLSX.utils.book_append_sheet(wb, ws, 'Areas')
+    XLSX.utils.book_append_sheet(wb, wsRef, 'Reference')
+    XLSX.writeFile(wb, `${assignment?.title as string ?? 'assignment'}-areas.xlsx`)
+  }
+
+  async function handleExcelUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const buffer = await file.arrayBuffer()
+    const wb = XLSX.read(buffer)
+    const ws = wb.Sheets['Areas']
+    if (!ws) { alert('Sheet "Areas" not found. Please use the downloaded template.'); return }
+
+    const raw = XLSX.utils.sheet_to_json<Record<string, string>>(ws, { raw: false })
+
+    const updates: PendingUpdate[] = []
+    for (const row of raw) {
+      const rowId = row['ID (do not edit)']?.trim()
+      if (!rowId || row['Type'] === 'Type') continue
+
+      let current: AreaRow | undefined
+      let parentId: string | undefined
+      for (const area of areas) {
+        if ((area.id as string) === rowId) { current = area; break }
+        for (const sub of area.subAreas ?? []) {
+          if ((sub.id as string) === rowId) { current = sub; parentId = area.id as string; break }
+        }
+        if (current) break
+      }
+      if (!current) continue
+
+      const changes: Record<string, string> = {}
+      const newAssignee = row['Assigned To']?.trim()
+      const exec = executives.find(e => e.full_name === newAssignee)
+      if (exec && exec.id !== (current.assigned_to as string)) changes.assigned_to = exec.id
+
+      const statusVal = row['Status']?.trim()
+      if (statusVal && statusVal !== (current.status as string)) changes.status = statusVal
+
+      const priorityVal = row['Priority']?.trim()
+      if (priorityVal && priorityVal !== (current.priority as string)) changes.priority = priorityVal
+
+      const dueVal = row['Due Date (YYYY-MM-DD)']?.trim()
+      if (dueVal && dueVal !== (current.due_date as string)) changes.due_date = dueVal
+
+      if (Object.keys(changes).length > 0) {
+        updates.push({
+          id: rowId,
+          type: row['Type'] as 'Area' | 'Sub-Area',
+          title: current.title as string,
+          changes,
+          parentId,
+        })
+      }
+    }
+
+    if (updates.length === 0) {
+      alert('No changes detected in the uploaded file.')
+      return
+    }
+    setPendingUpdates(updates)
+    setShowUploadPreview(true)
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
+  async function applyBulkUpdates() {
+    setApplyingUpdates(true)
+    for (const u of pendingUpdates) {
+      await supabase.from('tasks').update(u.changes).eq('id', u.id)
+    }
+    // Refresh areas in state
+    const { data: allTasks } = await supabase.from('tasks').select('*').eq('assignment_id', id as string).order('created_at')
+    const taskList = allTasks ?? []
+    const assigneeIds = [...new Set(taskList.map(t => t.assigned_to as string).filter(Boolean))]
+    const { data: assigneeProfiles } = assigneeIds.length > 0
+      ? await supabase.from('profiles').select('id, full_name').in('id', assigneeIds)
+      : { data: [] as { id: string; full_name: string }[] }
+    const nameMap = Object.fromEntries((assigneeProfiles ?? []).map(p => [p.id, p.full_name]))
+    const withNames = taskList.map(t => ({ ...t, _assigneeName: nameMap[t.assigned_to as string] ?? 'Unassigned' }))
+    const top = withNames.filter(t => !t.parent_id)
+    const children = withNames.filter(t => !!t.parent_id)
+    setAreas(top.map(a => ({ ...a, subAreas: children.filter(c => c.parent_id === a.id) })))
+    setApplyingUpdates(false)
+    setShowUploadPreview(false)
+    setPendingUpdates([])
+  }
+
   if (loading) return <AppShell><div className="py-12 text-center text-gray-400">Loading...</div></AppShell>
   if (!assignment) return <AppShell><div className="py-12 text-center text-gray-400">Assignment not found</div></AppShell>
 
@@ -530,16 +653,33 @@ export default function AssignmentDetailPage() {
                   <p className="text-xs text-gray-400 mt-0.5">{completedSubAreas}/{totalSubAreas} sub-areas completed</p>
                 )}
               </div>
-              {(canManage && !isPreviousAM) && (
-                <button onClick={() => setShowAreaForm(!showAreaForm)} className="text-sm text-blue-600 hover:underline">
-                  {showAreaForm ? 'Cancel' : '+ Add Area'}
-                </button>
-              )}
-              {isExecutive && (
-                <button onClick={() => setShowAreaForm(!showAreaForm)} className="text-sm text-blue-600 hover:underline">
-                  {showAreaForm ? 'Cancel' : '+ Take Up Area'}
-                </button>
-              )}
+              <div className="flex items-center gap-2">
+                {areas.length > 0 && (
+                  <button onClick={downloadAreaExcel}
+                    className="text-xs text-gray-500 border border-gray-200 px-2.5 py-1.5 rounded-lg hover:bg-gray-50 flex items-center gap-1.5">
+                    ⬇ Excel
+                  </button>
+                )}
+                {canManage && areas.length > 0 && (
+                  <>
+                    <button onClick={() => fileInputRef.current?.click()}
+                      className="text-xs text-green-700 border border-green-200 px-2.5 py-1.5 rounded-lg hover:bg-green-50 flex items-center gap-1.5">
+                      ⬆ Upload
+                    </button>
+                    <input ref={fileInputRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleExcelUpload} />
+                  </>
+                )}
+                {(canManage && !isPreviousAM) && (
+                  <button onClick={() => setShowAreaForm(!showAreaForm)} className="text-sm text-blue-600 hover:underline">
+                    {showAreaForm ? 'Cancel' : '+ Add Area'}
+                  </button>
+                )}
+                {isExecutive && (
+                  <button onClick={() => setShowAreaForm(!showAreaForm)} className="text-sm text-blue-600 hover:underline">
+                    {showAreaForm ? 'Cancel' : '+ Take Up Area'}
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Add Area Form */}
@@ -832,6 +972,49 @@ export default function AssignmentDetailPage() {
                 {savingReturn ? 'Sending...' : 'Send Return Request'}
               </button>
               <button onClick={() => { setShowReturnModal(false); setReturnReason('') }}
+                className="flex-1 text-gray-600 border border-gray-300 py-2 rounded-lg text-sm font-medium hover:bg-gray-50">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Upload Preview Modal */}
+      {showUploadPreview && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-xl mx-4 flex flex-col max-h-[80vh]">
+            <div className="px-6 py-4 border-b border-gray-100">
+              <h2 className="text-lg font-bold text-gray-900">Review Changes</h2>
+              <p className="text-sm text-gray-500 mt-0.5">{pendingUpdates.length} row{pendingUpdates.length !== 1 ? 's' : ''} will be updated</p>
+            </div>
+            <div className="overflow-y-auto flex-1 divide-y divide-gray-50">
+              {pendingUpdates.map(u => (
+                <div key={u.id} className="px-6 py-3">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${u.type === 'Area' ? 'bg-blue-100 text-blue-700' : 'bg-indigo-100 text-indigo-700'}`}>{u.type}</span>
+                    <span className="text-sm font-semibold text-gray-800">{u.title}</span>
+                  </div>
+                  <div className="space-y-0.5">
+                    {Object.entries(u.changes).map(([field, val]) => {
+                      const label = field === 'assigned_to' ? 'Assigned To' : field.replace(/_/g, ' ')
+                      const displayVal = field === 'assigned_to' ? executives.find(e => e.id === val)?.full_name ?? val : val
+                      return (
+                        <p key={field} className="text-xs text-gray-500">
+                          <span className="capitalize font-medium text-gray-700">{label}:</span> → <span className="text-green-700 font-medium">{displayVal}</span>
+                        </p>
+                      )
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="px-6 py-4 border-t border-gray-100 flex gap-3">
+              <button onClick={applyBulkUpdates} disabled={applyingUpdates}
+                className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
+                {applyingUpdates ? 'Applying...' : `Apply ${pendingUpdates.length} Change${pendingUpdates.length !== 1 ? 's' : ''}`}
+              </button>
+              <button onClick={() => { setShowUploadPreview(false); setPendingUpdates([]) }}
                 className="flex-1 text-gray-600 border border-gray-300 py-2 rounded-lg text-sm font-medium hover:bg-gray-50">
                 Cancel
               </button>
