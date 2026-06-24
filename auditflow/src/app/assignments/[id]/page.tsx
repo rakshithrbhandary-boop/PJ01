@@ -390,24 +390,43 @@ export default function AssignmentDetailPage() {
 
     const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { raw: true, defval: '' })
 
-    const execNameMap = new Map(executives.map(e => [e.full_name.trim().toLowerCase(), e]))
+    // Debug: show what keys and first row look like
+    if (raw.length > 0) {
+      const keys = Object.keys(raw[0])
+      console.log('[Excel upload] columns:', keys)
+      console.log('[Excel upload] row 0:', raw[0])
+    } else {
+      alert('Excel file has no data rows. Fill in data and re-upload.')
+      if (fileInputRef.current) fileInputRef.current.value = ''
+      return
+    }
 
-    const updates: PendingUpdate[] = []
-    const skipped: string[] = []
+    const execNameMap = new Map(executives.map(e => [e.full_name.trim().toLowerCase(), e]))
+    // Set of all area titles seen in this upload (for resolving sub-area parents)
+    const newAreaTitles = new Set<string>()
+
+    // Parse all rows first
+    type ParsedRow = { rowId: string | null; areaTitle: string; subAreaTitle: string; exec: { id: string; full_name: string } | undefined; priorityVal: string; dueVal: string; newAssignee: string }
+    const parsed: ParsedRow[] = []
     for (const row of raw) {
       const rowId = (String(row['ID'] ?? '').trim()) || null
       const areaTitle = String(row['Area'] ?? '').trim()
       const subAreaTitle = String(row['Sub-Area'] ?? '').trim()
-      const rowType: 'Area' | 'Sub-Area' = subAreaTitle ? 'Sub-Area' : 'Area'
       if (!areaTitle) continue
-
       const newAssignee = String(row['Assigned To Executive'] ?? '').trim()
-      const exec = execNameMap.get(newAssignee.toLowerCase())
+      const exec = newAssignee ? execNameMap.get(newAssignee.toLowerCase()) : undefined
       const priorityVal = String(row['Priority'] ?? '').trim()
       const rawDue = row['Due Date (YYYY-MM-DD)']
-      const dueVal = rawDue instanceof Date
-        ? rawDue.toISOString().slice(0, 10)
-        : parseCellDate(rawDue)
+      const dueVal = rawDue instanceof Date ? rawDue.toISOString().slice(0, 10) : parseCellDate(rawDue)
+      if (!rowId && !subAreaTitle) newAreaTitles.add(areaTitle)
+      parsed.push({ rowId, areaTitle, subAreaTitle, exec, priorityVal, dueVal, newAssignee })
+    }
+
+    const updates: PendingUpdate[] = []
+    const skipped: string[] = []
+
+    for (const { rowId, areaTitle, subAreaTitle, exec, priorityVal, dueVal, newAssignee } of parsed) {
+      const rowType: 'Area' | 'Sub-Area' = subAreaTitle ? 'Sub-Area' : 'Area'
 
       if (rowId) {
         // Existing row — check for changes
@@ -432,35 +451,30 @@ export default function AssignmentDetailPage() {
         // New row — create it
         if (!exec || !dueVal) {
           const label = subAreaTitle || areaTitle
-          if (!exec) skipped.push(`"${label}" — executive "${newAssignee}" not found (check spelling)`)
+          if (!exec) skipped.push(`"${label}" — executive "${newAssignee}" not found`)
           else skipped.push(`"${label}" — missing due date`)
           continue
         }
-        const titleForNew = rowType === 'Sub-Area' ? subAreaTitle : areaTitle
-        // Parent area may exist in DB or may be a new area earlier in this same upload batch
-        const parentArea = rowType === 'Sub-Area'
-          ? areas.find(a => (a.title as string) === areaTitle)
-          : undefined
-        const parentInBatch = rowType === 'Sub-Area' && !parentArea
-          ? updates.find(u => u.isNew && u.type === 'Area' && u.title === areaTitle)
-          : undefined
-        if (rowType === 'Sub-Area' && !parentArea && !parentInBatch) {
-          skipped.push(`"${subAreaTitle}" — parent area "${areaTitle}" not found`)
-          continue
+        const titleForNew = subAreaTitle || areaTitle
+        if (rowType === 'Sub-Area') {
+          const parentInDB = areas.find(a => (a.title as string) === areaTitle)
+          const parentIsNew = newAreaTitles.has(areaTitle)
+          if (!parentInDB && !parentIsNew) {
+            skipped.push(`"${subAreaTitle}" — parent area "${areaTitle}" not in DB and not in this upload`)
+            continue
+          }
+          updates.push({
+            id: null, isNew: true, type: 'Sub-Area', title: titleForNew,
+            parentTitle: areaTitle,
+            parentId: parentInDB ? (parentInDB.id as string) : undefined,
+            changes: { assigned_to: exec.id, priority: priorityVal || 'medium', due_date: dueVal },
+          })
+        } else {
+          updates.push({
+            id: null, isNew: true, type: 'Area', title: titleForNew,
+            changes: { assigned_to: exec.id, priority: priorityVal || 'medium', due_date: dueVal },
+          })
         }
-        updates.push({
-          id: null,
-          isNew: true,
-          type: rowType,
-          title: titleForNew,
-          parentTitle: rowType === 'Sub-Area' ? areaTitle : undefined,
-          parentId: parentArea ? (parentArea.id as string) : undefined, // parentInBatch resolved later in applyBulkUpdates
-          changes: {
-            assigned_to: exec.id,
-            priority: priorityVal || 'medium',
-            due_date: dueVal,
-          },
-        })
       }
     }
 
