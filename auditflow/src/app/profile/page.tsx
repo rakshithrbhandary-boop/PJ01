@@ -11,6 +11,7 @@ export default function ProfilePage() {
   const [avatarFile, setAvatarFile] = useState<File | null>(null)
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [removeAvatar, setRemoveAvatar] = useState(false)
   const [message, setMessage] = useState<{ text: string; ok: boolean } | null>(null)
 
   useEffect(() => {
@@ -43,14 +44,15 @@ export default function ProfilePage() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!profile) return
-    if (name === profile.full_name && !avatarFile) {
+    if (name === profile.full_name && !avatarFile && !removeAvatar) {
       setMessage({ text: 'No changes to submit.', ok: false })
       return
     }
     setSubmitting(true)
 
-    let avatarUrl: string | null = null
-    if (avatarFile) {
+    // 'REMOVE' is a sentinel value meaning clear the avatar
+    let avatarUrl: string | null = removeAvatar ? 'REMOVE' : null
+    if (!removeAvatar && avatarFile) {
       const ext = avatarFile.name.split('.').pop()
       const path = `${profile.id}-${Date.now()}.${ext}`
       const { error: uploadErr } = await supabase.storage.from('avatars').upload(path, avatarFile, { upsert: true })
@@ -154,14 +156,26 @@ export default function ProfilePage() {
               <input
                 type="file"
                 accept="image/*"
+                disabled={removeAvatar}
                 onChange={handleFileChange}
-                className="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-blue-50 file:text-blue-600 hover:file:bg-blue-100"
+                className="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-blue-50 file:text-blue-600 hover:file:bg-blue-100 disabled:opacity-40"
               />
-              {avatarPreview && (
+              {avatarPreview && !removeAvatar && (
                 <div className="mt-3">
                   <p className="text-xs text-gray-500 mb-1">Preview:</p>
                   <img src={avatarPreview} alt="preview" className="w-16 h-16 rounded-full object-cover border border-gray-200" />
                 </div>
+              )}
+              {profile?.avatar_url && (
+                <label className="flex items-center gap-2 mt-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={removeAvatar}
+                    onChange={e => { setRemoveAvatar(e.target.checked); if (e.target.checked) { setAvatarFile(null); setAvatarPreview(null) } }}
+                    className="w-4 h-4 rounded border-gray-300 text-red-500 focus:ring-red-400"
+                  />
+                  <span className="text-sm text-red-600">Remove current profile picture</span>
+                </label>
               )}
             </div>
 

@@ -63,7 +63,8 @@ export default function AdminPage() {
     const { data: { user } } = await supabase.auth.getUser()
     const updates: Record<string, unknown> = {}
     if (req.requested_name) updates.full_name = req.requested_name
-    if (req.requested_avatar_url) updates.avatar_url = req.requested_avatar_url
+    if (req.requested_avatar_url === 'REMOVE') updates.avatar_url = null
+    else if (req.requested_avatar_url) updates.avatar_url = req.requested_avatar_url
     if (Object.keys(updates).length > 0) {
       await supabase.from('profiles').update(updates).eq('id', userId)
     }
@@ -233,6 +234,9 @@ export default function AdminPage() {
                         {(req.requested_avatar_url as string | null) && (
                           <div className="flex items-center gap-3 bg-gray-50 rounded-lg px-4 py-2.5">
                             <span className="text-xs text-gray-500 w-24">Profile pic</span>
+                            {(req.requested_avatar_url as string) === 'REMOVE' ? (
+                              <span className="text-sm text-red-600 font-medium">Remove profile picture</span>
+                            ) : (
                             <div className="flex items-center gap-3">
                               <div className="w-8 h-8 rounded-full bg-gray-200 overflow-hidden">
                                 {user.avatar_url && <img src={user.avatar_url} alt="current" className="w-full h-full object-cover" />}
@@ -240,6 +244,7 @@ export default function AdminPage() {
                               <span className="text-gray-400 text-sm">→</span>
                               <img src={req.requested_avatar_url as string} alt="new" className="w-8 h-8 rounded-full object-cover border border-gray-200" />
                             </div>
+                            )}
                           </div>
                         )}
                       </div>
