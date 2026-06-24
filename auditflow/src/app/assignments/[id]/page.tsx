@@ -341,10 +341,11 @@ export default function AssignmentDetailPage() {
     ?? (assignment.assigned_to_profile as { full_name?: string } | null)?.full_name
   const managerName = (assignment.manager as { full_name?: string })?.full_name
 
-  // Involved executives = those assigned to any area or sub-area
+  // Involved executives = explicitly added to assignment OR assigned to any area/sub-area
   const allAssignedIds = new Set([
     ...areas.map(a => a.assigned_to as string),
     ...areas.flatMap(a => (a.subAreas ?? []).map(s => s.assigned_to as string)),
+    ...assignmentExecutives.map(r => r.executive_id),
   ].filter(Boolean))
   const involvedExecutives = executives.filter(e => allAssignedIds.has(e.id))
 
