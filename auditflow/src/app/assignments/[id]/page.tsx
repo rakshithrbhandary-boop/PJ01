@@ -389,89 +389,111 @@ export default function AssignmentDetailPage() {
     if (!ws) { alert('Sheet "Areas" not found. Please use the downloaded template.'); return }
 
     const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { raw: true, defval: '' })
-
-    // Debug: show what keys and first row look like
-    if (raw.length > 0) {
-      const keys = Object.keys(raw[0])
-      console.log('[Excel upload] columns:', keys)
-      console.log('[Excel upload] row 0:', raw[0])
-    } else {
-      alert('Excel file has no data rows. Fill in data and re-upload.')
+    if (raw.length === 0) {
+      alert('Excel file has no data rows.')
       if (fileInputRef.current) fileInputRef.current.value = ''
       return
     }
 
-    const execNameMap = new Map(executives.map(e => [e.full_name.trim().toLowerCase(), e]))
-    // Set of all area titles seen in this upload (for resolving sub-area parents)
-    const newAreaTitles = new Set<string>()
+    const execNameMap = new Map(executives.map(ex => [ex.full_name.trim().toLowerCase(), ex]))
 
-    // Parse all rows first
-    type ParsedRow = { rowId: string | null; areaTitle: string; subAreaTitle: string; exec: { id: string; full_name: string } | undefined; priorityVal: string; dueVal: string; newAssignee: string }
-    const parsed: ParsedRow[] = []
-    for (const row of raw) {
-      const rowId = (String(row['ID'] ?? '').trim()) || null
-      const areaTitle = String(row['Area'] ?? '').trim()
-      const subAreaTitle = String(row['Sub-Area'] ?? '').trim()
-      if (!areaTitle) continue
-      const newAssignee = String(row['Assigned To Executive'] ?? '').trim()
-      const exec = newAssignee ? execNameMap.get(newAssignee.toLowerCase()) : undefined
-      const priorityVal = String(row['Priority'] ?? '').trim()
-      const rawDue = row['Due Date (YYYY-MM-DD)']
-      const dueVal = rawDue instanceof Date ? rawDue.toISOString().slice(0, 10) : parseCellDate(rawDue)
-      if (!rowId && !subAreaTitle) newAreaTitles.add(areaTitle)
-      parsed.push({ rowId, areaTitle, subAreaTitle, exec, priorityVal, dueVal, newAssignee })
+    const parseExec = (val: unknown) => {
+      const s = String(val ?? '').trim()
+      return s ? execNameMap.get(s.toLowerCase()) : undefined
+    }
+    const parseDue = (val: unknown) => {
+      if (val instanceof Date) return val.toISOString().slice(0, 10)
+      return parseCellDate(val)
     }
 
     const updates: PendingUpdate[] = []
     const skipped: string[] = []
+    // Track which area titles we've already queued to create (to avoid duplicates)
+    const queuedAreaTitles = new Set<string>()
 
-    for (const { rowId, areaTitle, subAreaTitle, exec, priorityVal, dueVal, newAssignee } of parsed) {
-      const rowType: 'Area' | 'Sub-Area' = subAreaTitle ? 'Sub-Area' : 'Area'
+    // Group rows by area title so we can auto-create parent areas from sub-area rows
+    const areaGroups = new Map<string, { areaRow: Record<string, unknown> | null; subRows: Record<string, unknown>[] }>()
+    for (const row of raw) {
+      const areaTitle = String(row['Area'] ?? '').trim()
+      if (!areaTitle) continue
+      const subTitle = String(row['Sub-Area'] ?? '').trim()
+      if (!areaGroups.has(areaTitle)) areaGroups.set(areaTitle, { areaRow: null, subRows: [] })
+      const g = areaGroups.get(areaTitle)!
+      if (subTitle) g.subRows.push(row)
+      else g.areaRow = row
+    }
+
+    for (const [areaTitle, { areaRow, subRows }] of areaGroups) {
+      const rowId = areaRow ? (String(areaRow['ID'] ?? '').trim() || null) : null
+      const existingArea = areas.find(a => (a.title as string) === areaTitle)
 
       if (rowId) {
-        // Existing row — check for changes
-        let current: AreaRow | undefined
-        let parentId: string | undefined
-        for (const area of areas) {
-          if ((area.id as string) === rowId) { current = area; break }
-          for (const sub of area.subAreas ?? []) {
-            if ((sub.id as string) === rowId) { current = sub; parentId = area.id as string; break }
-          }
-          if (current) break
-        }
-        if (!current) continue
+        // Existing area row — check for field changes
+        if (!existingArea) { skipped.push(`Area "${areaTitle}" ID not found in DB`); continue }
+        const exec = parseExec(areaRow!['Assigned To Executive'])
+        const priorityVal = String(areaRow!['Priority'] ?? '').trim()
+        const dueVal = parseDue(areaRow!['Due Date (YYYY-MM-DD)'])
         const changes: Record<string, string> = {}
-        if (exec && exec.id !== (current.assigned_to as string)) changes.assigned_to = exec.id
-        if (priorityVal && priorityVal !== (current.priority as string)) changes.priority = priorityVal
-        if (dueVal && dueVal !== (current.due_date as string)) changes.due_date = dueVal
-        if (Object.keys(changes).length > 0) {
-          updates.push({ id: rowId, type: rowType, title: current.title as string, changes, parentId })
-        }
-      } else {
-        // New row — create it
+        if (exec && exec.id !== (existingArea.assigned_to as string)) changes.assigned_to = exec.id
+        if (priorityVal && priorityVal !== (existingArea.priority as string)) changes.priority = priorityVal
+        if (dueVal && dueVal !== (existingArea.due_date as string)) changes.due_date = dueVal
+        if (Object.keys(changes).length > 0) updates.push({ id: rowId, type: 'Area', title: areaTitle, changes })
+      } else if (!existingArea) {
+        // New area — need to create it
+        // Use explicit area row values, or fall back to first sub-area's values
+        const srcRow = areaRow ?? subRows[0]
+        const exec = parseExec(srcRow?.['Assigned To Executive'])
+        const dueVal = parseDue(srcRow?.['Due Date (YYYY-MM-DD)'])
+        const priorityVal = String(srcRow?.['Priority'] ?? '').trim()
         if (!exec || !dueVal) {
-          const label = subAreaTitle || areaTitle
-          if (!exec) skipped.push(`"${label}" — executive "${newAssignee}" not found`)
-          else skipped.push(`"${label}" — missing due date`)
+          const execName = String(srcRow?.['Assigned To Executive'] ?? '').trim()
+          if (!exec) skipped.push(`Area "${areaTitle}" — executive "${execName}" not found`)
+          else skipped.push(`Area "${areaTitle}" — missing due date`)
+          // Still try to process sub-areas if possible (skip them too for now)
           continue
         }
-        const titleForNew = subAreaTitle || areaTitle
-        if (rowType === 'Sub-Area') {
-          const parentInDB = areas.find(a => (a.title as string) === areaTitle)
-          const parentIsNew = newAreaTitles.has(areaTitle)
-          if (!parentInDB && !parentIsNew) {
-            skipped.push(`"${subAreaTitle}" — parent area "${areaTitle}" not in DB and not in this upload`)
+        if (!queuedAreaTitles.has(areaTitle)) {
+          queuedAreaTitles.add(areaTitle)
+          updates.push({ id: null, isNew: true, type: 'Area', title: areaTitle, changes: { assigned_to: exec.id, priority: priorityVal || 'medium', due_date: dueVal } })
+        }
+      }
+
+      // Sub-area rows
+      for (const sub of subRows) {
+        const subId = String(sub['ID'] ?? '').trim() || null
+        const subTitle = String(sub['Sub-Area'] ?? '').trim()
+        const exec = parseExec(sub['Assigned To Executive'])
+        const priorityVal = String(sub['Priority'] ?? '').trim()
+        const dueVal = parseDue(sub['Due Date (YYYY-MM-DD)'])
+
+        if (subId) {
+          // Existing sub-area — check changes
+          let currentSub: AreaRow | undefined
+          let parentAreaId: string | undefined
+          for (const a of areas) {
+            for (const s of a.subAreas ?? []) {
+              if ((s.id as string) === subId) { currentSub = s; parentAreaId = a.id as string; break }
+            }
+            if (currentSub) break
+          }
+          if (!currentSub) continue
+          const changes: Record<string, string> = {}
+          if (exec && exec.id !== (currentSub.assigned_to as string)) changes.assigned_to = exec.id
+          if (priorityVal && priorityVal !== (currentSub.priority as string)) changes.priority = priorityVal
+          if (dueVal && dueVal !== (currentSub.due_date as string)) changes.due_date = dueVal
+          if (Object.keys(changes).length > 0) updates.push({ id: subId, type: 'Sub-Area', title: subTitle, changes, parentId: parentAreaId })
+        } else {
+          // New sub-area
+          if (!exec || !dueVal) {
+            const execName = String(sub['Assigned To Executive'] ?? '').trim()
+            if (!exec) skipped.push(`Sub-area "${subTitle}" — executive "${execName}" not found`)
+            else skipped.push(`Sub-area "${subTitle}" — missing due date`)
             continue
           }
           updates.push({
-            id: null, isNew: true, type: 'Sub-Area', title: titleForNew,
+            id: null, isNew: true, type: 'Sub-Area', title: subTitle,
             parentTitle: areaTitle,
-            parentId: parentInDB ? (parentInDB.id as string) : undefined,
-            changes: { assigned_to: exec.id, priority: priorityVal || 'medium', due_date: dueVal },
-          })
-        } else {
-          updates.push({
-            id: null, isNew: true, type: 'Area', title: titleForNew,
+            parentId: existingArea ? (existingArea.id as string) : undefined,
             changes: { assigned_to: exec.id, priority: priorityVal || 'medium', due_date: dueVal },
           })
         }
@@ -480,8 +502,8 @@ export default function AssignmentDetailPage() {
 
     if (updates.length === 0) {
       const hint = skipped.length > 0
-        ? `\n\nSkipped rows:\n${skipped.join('\n')}`
-        : '\n\nMake sure:\n• "Assigned To Executive" exactly matches an executive name\n• "Due Date (YYYY-MM-DD)" is filled'
+        ? `\n\nSkipped rows:\n${skipped.slice(0, 5).join('\n')}`
+        : '\n\nMake sure "Assigned To Executive" and "Due Date" are filled.'
       alert(`No changes or new rows detected.${hint}`)
       return
     }
