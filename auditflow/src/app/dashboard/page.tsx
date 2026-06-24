@@ -156,6 +156,11 @@ export default function DashboardPage() {
 
   const isManager = profile?.role === 'manager'
   const isAM = profile?.role === 'assistant_manager'
+  const isExecutive = profile?.role === 'executive'
+
+  if (isExecutive) {
+    return <ExecutiveDashboard profile={profile!} assignments={assignments} tasks={tasks} observations={observations} />
+  }
 
   // ── Derived computations ──────────────────────────────────────────────────
 
@@ -590,6 +595,322 @@ export default function DashboardPage() {
                         {new Date(ev.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
                       </span>
                     )}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    </AppShell>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Executive Dashboard
+// ─────────────────────────────────────────────────────────────────────────────
+
+function ExecutiveDashboard({
+  profile, assignments, tasks, observations,
+}: {
+  profile: Profile
+  assignments: Assignment[]
+  tasks: Task[]
+  observations: Obs[]
+}) {
+  const today = new Date().toISOString().split('T')[0]
+  const myId = profile.id
+
+  // My areas (top-level tasks assigned to me)
+  const myAreas = tasks.filter(t => !t.parent_id && t.assigned_to === myId)
+  // My sub-areas (child tasks assigned to me, including delegated)
+  const mySubAreas = tasks.filter(t => !!t.parent_id && t.assigned_to === myId)
+  // Delegated sub-areas — sub-areas I own that have delegated_from set (someone else originally owned them)
+  const delegatedToMe = (mySubAreas as (Task & { delegated_from?: string | null; delegation_note?: string | null })[])
+    .filter(t => (t as Record<string, unknown>).delegated_from)
+
+  const completedAreas = myAreas.filter(t => t.status === 'completed').length
+  const completedSubs = mySubAreas.filter(t => t.status === 'completed').length
+  const overdueItems = [...myAreas, ...mySubAreas].filter(t => t.status !== 'completed' && t.due_date && t.due_date < today)
+
+  // Observations on my areas/sub-areas
+  const myAreaIds = new Set([...myAreas, ...mySubAreas].map(t => t.id))
+  const myObs = observations.filter(o => o.task_id && myAreaIds.has(o.task_id))
+  const openMyObs = myObs.filter(o => o.status === 'open')
+
+  // Recently completed
+  const recentlyCompleted = [...myAreas, ...mySubAreas]
+    .filter(t => t.status === 'completed')
+    .slice(0, 5)
+
+  // Per-assignment work cards
+  const myAssignmentIds = [...new Set([...myAreas, ...mySubAreas].map(t => t.assignment_id))]
+  const myAssignments = assignments.filter(a => myAssignmentIds.includes(a.id as string))
+
+  return (
+    <AppShell>
+      <div className="space-y-8">
+        {/* Header */}
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
+          <p className="text-gray-500 mt-1">Welcome back, {profile.full_name} — your audit workload</p>
+        </div>
+
+        {/* Stat Cards */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <StatCard label="My Areas of Audit" icon="📁"
+            value={myAreas.length}
+            sub={`${completedAreas} completed`}
+            color="text-gray-900" />
+          <StatCard label="My Sub-areas" icon="📂"
+            value={mySubAreas.length}
+            sub={`${completedSubs} / ${mySubAreas.length} done`}
+            color="text-indigo-600" />
+          <StatCard label="Overdue Items" icon="⏰"
+            value={overdueItems.length}
+            sub={overdueItems.length > 0 ? "Needs immediate attention" : "All on track"}
+            color={overdueItems.length > 0 ? "text-red-600" : "text-green-600"} />
+          <StatCard label="Open Observations" icon="🔍"
+            value={openMyObs.length}
+            sub={`on my areas`}
+            color={openMyObs.length > 0 ? "text-orange-600" : "text-green-600"}
+            href="/observations" />
+        </div>
+
+        {/* Per-assignment work cards */}
+        {myAssignments.length > 0 && (
+          <div>
+            <h2 className="font-semibold text-gray-900 mb-4">My Work by Assignment</h2>
+            <div className="space-y-4">
+              {myAssignments.map(a => {
+                const aId = a.id as string
+                const aAreas = myAreas.filter(t => t.assignment_id === aId)
+                const aSubs = mySubAreas.filter(t => t.assignment_id === aId)
+                const completedA = aAreas.filter(t => t.status === 'completed').length
+                const completedS = aSubs.filter(t => t.status === 'completed').length
+                const days = daysUntil(a.due_date as string)
+
+                return (
+                  <div key={aId} className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+                    {/* Assignment header */}
+                    <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <Link href={`/assignments/${aId}`} className="font-semibold text-gray-900 hover:text-blue-600">
+                            {a.title as string}
+                          </Link>
+                          {(a.code as string) && (
+                            <span className="text-xs font-mono px-2 py-0.5 bg-blue-50 text-blue-700 rounded border border-blue-100">{a.code as string}</span>
+                          )}
+                          <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${STATUS_COLORS[a.status as string] ?? 'bg-gray-100'}`}>
+                            {STATUS_LABELS[a.status as string] ?? a.status as string}
+                          </span>
+                        </div>
+                        <p className="text-xs text-gray-400 mt-0.5">{a.client_name as string}</p>
+                      </div>
+                      <div className="text-right">
+                        {days !== null && (
+                          days < 0 ? <span className="text-xs font-semibold text-red-600">{Math.abs(days)}d overdue</span>
+                          : days <= 7 ? <span className="text-xs font-semibold text-orange-500">{days}d left</span>
+                          : <span className="text-xs text-gray-400">{days}d left</span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Areas */}
+                    {aAreas.length > 0 && (
+                      <div className="divide-y divide-gray-50">
+                        {aAreas.map(area => {
+                          const areaSubs = aSubs.filter(s => s.assignment_id === aId &&
+                            tasks.find(t => t.id === s.id && (t as Record<string, unknown>).parent_id === area.id))
+                          const doneS = areaSubs.filter(s => s.status === 'completed').length
+                          const areaOverdue = area.due_date && area.due_date < today && area.status !== 'completed'
+
+                          return (
+                            <div key={area.id} className="px-5 py-3">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                  <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                                    area.status === 'completed' ? 'bg-green-400' :
+                                    area.status === 'in_progress' ? 'bg-blue-400' :
+                                    areaOverdue ? 'bg-red-400' : 'bg-gray-300'
+                                  }`} />
+                                  <span className="text-sm font-medium text-gray-800">{area.title}</span>
+                                  {areaOverdue && <span className="text-xs px-1.5 py-0.5 rounded-full bg-red-100 text-red-700 font-medium">Overdue</span>}
+                                </div>
+                                <div className="flex items-center gap-3 text-xs text-gray-400">
+                                  {areaSubs.length > 0 && <span>{doneS}/{areaSubs.length} sub-areas</span>}
+                                  <span className={`px-2 py-0.5 rounded-full font-medium capitalize ${
+                                    area.status === 'completed' ? 'bg-green-100 text-green-700' :
+                                    area.status === 'in_progress' ? 'bg-blue-100 text-blue-700' :
+                                    'bg-gray-100 text-gray-600'
+                                  }`}>{(area.status ?? 'not started').replace(/_/g, ' ')}</span>
+                                </div>
+                              </div>
+                              {/* Sub-areas under this area */}
+                              {areaSubs.length > 0 && (
+                                <div className="ml-4 mt-2 border-l-2 border-indigo-100 pl-3 space-y-1.5">
+                                  {areaSubs.map(sub => {
+                                    const subOverdue = sub.due_date && sub.due_date < today && sub.status !== 'completed'
+                                    return (
+                                      <div key={sub.id} className="flex items-center justify-between">
+                                        <div className="flex items-center gap-2">
+                                          <div className={`w-1.5 h-1.5 rounded-full ${sub.status === 'completed' ? 'bg-green-400' : subOverdue ? 'bg-red-400' : 'bg-gray-300'}`} />
+                                          <span className="text-xs text-gray-700">{sub.title}</span>
+                                          {subOverdue && <span className="text-xs px-1 py-0.5 rounded bg-red-50 text-red-600 font-medium">Overdue</span>}
+                                        </div>
+                                        <span className={`text-xs px-1.5 py-0.5 rounded-full capitalize ${
+                                          sub.status === 'completed' ? 'bg-green-100 text-green-700' :
+                                          sub.status === 'in_progress' ? 'bg-blue-100 text-blue-700' :
+                                          'bg-gray-100 text-gray-600'
+                                        }`}>{(sub.status ?? 'not started').replace(/_/g, ' ')}</span>
+                                      </div>
+                                    )
+                                  })}
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+
+                    {/* Footer progress */}
+                    <div className="px-5 py-3 bg-gray-50 border-t border-gray-100 flex items-center gap-6 text-xs text-gray-500">
+                      <span>{completedA}/{aAreas.length} areas done</span>
+                      {aSubs.length > 0 && <span>{completedS}/{aSubs.length} sub-areas done</span>}
+                      <Link href={`/assignments/${aId}`} className="ml-auto text-blue-600 hover:underline font-medium">Open Assignment →</Link>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
+        <div className="grid grid-cols-2 gap-6">
+          {/* Overdue Items */}
+          <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+            <div className="px-5 py-4 border-b border-gray-100">
+              <h2 className="font-semibold text-gray-900">Overdue Items</h2>
+              <p className="text-xs text-gray-400 mt-0.5">Areas and sub-areas past their due date</p>
+            </div>
+            {overdueItems.length === 0 ? (
+              <p className="px-5 py-8 text-center text-sm text-green-600 font-medium">All items are on track ✓</p>
+            ) : (
+              <div className="divide-y divide-gray-50">
+                {overdueItems.map(t => {
+                  const days = daysUntil(t.due_date)
+                  const parentArea = t.parent_id ? tasks.find(a => a.id === (t as Record<string, unknown>).parent_id) : null
+                  const asgn = assignments.find(a => a.id === t.assignment_id)
+                  return (
+                    <div key={t.id} className="px-5 py-3">
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <p className="text-sm font-medium text-gray-800">{t.title}</p>
+                          <p className="text-xs text-gray-400 mt-0.5">
+                            {parentArea ? `Sub-area of ${parentArea.title} · ` : 'Area · '}
+                            {asgn?.title as string}
+                          </p>
+                        </div>
+                        <span className="text-xs font-semibold text-red-600 flex-shrink-0 ml-2">
+                          {days !== null ? `${Math.abs(days)}d overdue` : '—'}
+                        </span>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Observations on my areas */}
+          <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+            <div className="px-5 py-4 border-b border-gray-100">
+              <h2 className="font-semibold text-gray-900">Observations on My Areas</h2>
+              <p className="text-xs text-gray-400 mt-0.5">Raised on areas and sub-areas you own</p>
+            </div>
+            {myObs.length === 0 ? (
+              <p className="px-5 py-8 text-center text-sm text-gray-400">No observations on your areas</p>
+            ) : (
+              <div className="divide-y divide-gray-50">
+                {myObs.slice(0, 6).map(o => (
+                  <Link key={o.id} href={`/observations/${o.id}`}
+                    className="px-5 py-3 flex items-center justify-between hover:bg-gray-50 group">
+                    <p className="text-sm font-medium text-gray-800 group-hover:text-blue-600 truncate flex-1 mr-3">{o.title}</p>
+                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                      <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium capitalize ${RISK_COLORS[o.risk_level] ?? 'bg-gray-100 text-gray-600'}`}>
+                        {o.risk_level}
+                      </span>
+                      <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${
+                        o.status === 'open' ? 'bg-red-100 text-red-700' :
+                        o.status === 'resolved' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'
+                      }`}>{o.status}</span>
+                    </div>
+                  </Link>
+                ))}
+                {myObs.length > 6 && (
+                  <div className="px-5 py-2">
+                    <Link href="/observations" className="text-xs text-blue-600 hover:underline">View all {myObs.length} →</Link>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Delegated to me */}
+        {delegatedToMe.length > 0 && (
+          <div className="bg-purple-50 border border-purple-100 rounded-xl overflow-hidden">
+            <div className="px-5 py-4 border-b border-purple-100">
+              <h2 className="font-semibold text-gray-900">Delegated to Me</h2>
+              <p className="text-xs text-gray-400 mt-0.5">Sub-areas assigned to you by another executive</p>
+            </div>
+            <div className="divide-y divide-purple-100">
+              {delegatedToMe.map(t => {
+                const asgn = assignments.find(a => a.id === t.assignment_id)
+                const parentArea = tasks.find(a => a.id === (t as Record<string, unknown>).parent_id as string)
+                return (
+                  <div key={t.id} className="px-5 py-3 flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium text-gray-800">{t.title}</p>
+                      <p className="text-xs text-gray-400 mt-0.5">
+                        {parentArea ? `Under ${parentArea.title} · ` : ''}{asgn?.title as string}
+                      </p>
+                      {!!(t as Record<string, unknown>).delegation_note && (
+                        <p className="text-xs text-purple-600 mt-0.5 italic">"{String((t as Record<string, unknown>).delegation_note)}"</p>
+                      )}
+                    </div>
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium capitalize ${
+                      t.status === 'completed' ? 'bg-green-100 text-green-700' :
+                      t.status === 'in_progress' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'
+                    }`}>{t.status.replace(/_/g, ' ')}</span>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Recently completed */}
+        {recentlyCompleted.length > 0 && (
+          <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+            <div className="px-5 py-4 border-b border-gray-100">
+              <h2 className="font-semibold text-gray-900">Recently Completed</h2>
+              <p className="text-xs text-gray-400 mt-0.5">Areas and sub-areas you've wrapped up</p>
+            </div>
+            <div className="divide-y divide-gray-50">
+              {recentlyCompleted.map(t => {
+                const asgn = assignments.find(a => a.id === t.assignment_id)
+                const isSubArea = !!t.parent_id
+                return (
+                  <div key={t.id} className="px-5 py-3 flex items-center gap-3">
+                    <div className="w-5 h-5 rounded-full bg-green-100 text-green-600 flex items-center justify-center text-xs font-bold flex-shrink-0">✓</div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-800">{t.title}</p>
+                      <p className="text-xs text-gray-400">{isSubArea ? 'Sub-area' : 'Area'} · {asgn?.title as string}</p>
+                    </div>
+                    <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">Completed</span>
                   </div>
                 )
               })}
