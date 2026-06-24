@@ -36,11 +36,10 @@ function daysUntil(d: string | null): number | null {
 function computeProgress(areas: { parent_id: string | null; status: string }[], obs: { status: string }[]) {
   const top = areas.filter(t => !t.parent_id)
   const sub = areas.filter(t => !!t.parent_id)
-  const aP = top.length > 0 ? (top.filter(t => t.status === 'completed').length / top.length) * 100 : null
-  const sP = sub.length > 0 ? (sub.filter(t => t.status === 'completed').length / sub.length) * 100 : null
-  const oP = obs.length > 0 ? (obs.filter(o => o.status !== 'open').length / obs.length) * 100 : null
-  const parts = [aP, sP, oP].filter(v => v !== null) as number[]
-  return parts.length > 0 ? Math.round(parts.reduce((a, b) => a + b, 0) / parts.length) : 0
+  const aP = top.length > 0 ? (top.filter(t => t.status === 'completed').length / top.length) * 100 : 0
+  const sP = sub.length > 0 ? (sub.filter(t => t.status === 'completed').length / sub.length) * 100 : 0
+  const oP = obs.length > 0 ? (obs.filter(o => o.status !== 'open').length / obs.length) * 100 : 0
+  return Math.round(aP * 0.30 + sP * 0.60 + oP * 0.10)
 }
 
 function StatCard({
