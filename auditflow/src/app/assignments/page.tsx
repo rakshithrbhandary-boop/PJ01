@@ -131,6 +131,7 @@ export default function AssignmentsPage() {
   const [overviewByAssignment, setOverviewByAssignment] = useState<Record<string, OverviewData>>({})
   const [loadingOverview, setLoadingOverview] = useState<Record<string, boolean>>({})
   const [progressByAssignment, setProgressByAssignment] = useState<Record<string, ProgressData>>({})
+  const [currentAMByAssignment, setCurrentAMByAssignment] = useState<Record<string, string>>({})
 
   useEffect(() => {
     async function load() {
@@ -144,7 +145,7 @@ export default function AssignmentsPage() {
       if (p?.role === 'manager') {
         const { data } = await supabase
           .from('assignments')
-          .select('*, manager:profiles!assignments_manager_id_fkey(full_name)')
+          .select('*, manager:profiles!assignments_manager_id_fkey(full_name), assigned_to_profile:profiles!assignments_assigned_to_fkey(full_name)')
           .eq('manager_id', user.id)
           .order('created_at', { ascending: false })
         assignmentsData = data ?? []
@@ -187,20 +188,31 @@ export default function AssignmentsPage() {
 
       setAssignments(assignmentsData)
 
-      // Bulk fetch tasks + observations for progress bars
+      // Bulk fetch tasks, observations, and handovers for progress + current AM
       const allIds = assignmentsData.map(a => a.id as string)
       if (allIds.length > 0) {
-        const [{ data: allTasks }, { data: allObs }] = await Promise.all([
+        const [{ data: allTasks }, { data: allObs }, { data: allHandovers }] = await Promise.all([
           supabase.from('tasks').select('assignment_id, parent_id, status').in('assignment_id', allIds),
           supabase.from('observations').select('assignment_id, status').in('assignment_id', allIds),
+          supabase.from('assignment_handovers').select('assignment_id, to_am_name, created_at').in('assignment_id', allIds).order('created_at'),
         ])
         const progressMap: Record<string, ProgressData> = {}
+        const amMap: Record<string, string> = {}
         for (const aId of allIds) {
           const tasks = (allTasks ?? []).filter(t => t.assignment_id === aId)
           const obs = (allObs ?? []).filter(o => o.assignment_id === aId)
           progressMap[aId] = computeProgress(tasks, obs)
+          // Last handover's to_am_name = current AM; fall back to assigned_to_profile
+          const handoversForA = (allHandovers ?? []).filter(h => h.assignment_id === aId)
+          if (handoversForA.length > 0) {
+            amMap[aId] = handoversForA[handoversForA.length - 1].to_am_name
+          } else {
+            const asgn = assignmentsData.find(a => a.id === aId)
+            amMap[aId] = (asgn?.assigned_to_profile as { full_name?: string } | null)?.full_name ?? '—'
+          }
         }
         setProgressByAssignment(progressMap)
+        setCurrentAMByAssignment(amMap)
       }
 
       setLoading(false)
@@ -337,7 +349,7 @@ export default function AssignmentsPage() {
                   <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Type</th>
                   <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Status</th>
                   <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Due Date</th>
-                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Manager</th>
+                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">{isManager ? 'Current AM' : 'Manager'}</th>
                   {isManager && <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Actions</th>}
                 </tr>
               </thead>
@@ -394,7 +406,11 @@ export default function AssignmentsPage() {
                           )}
                         </td>
                         <td className={`px-4 py-4 text-sm ${dueDateClass(a.due_date as string, aStatus)}`}>{(a.due_date as string) || '—'}</td>
-                        <td className="px-4 py-4 text-sm text-gray-600">{(a.manager as { full_name?: string })?.full_name ?? '—'}</td>
+                        <td className="px-4 py-4 text-sm text-gray-600">
+                          {isManager
+                            ? (currentAMByAssignment[aId] ?? '—')
+                            : ((a.manager as { full_name?: string })?.full_name ?? '—')}
+                        </td>
                         {isManager && (
                           <td className="px-4 py-4">
                             <div className="flex gap-2">
