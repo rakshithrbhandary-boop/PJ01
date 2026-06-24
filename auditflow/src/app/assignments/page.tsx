@@ -146,7 +146,7 @@ export default function AssignmentsPage() {
       if (p?.role === 'manager') {
         const { data } = await supabase
           .from('assignments')
-          .select('*, manager:profiles!assignments_manager_id_fkey(full_name), assigned_to_profile:profiles!assignments_assigned_to_fkey(full_name)')
+          .select('*')
           .eq('manager_id', user.id)
           .order('created_at', { ascending: false })
         assignmentsData = data ?? []
@@ -154,7 +154,7 @@ export default function AssignmentsPage() {
       } else if (p?.role === 'assistant_manager') {
         const [{ data: direct }, { data: handoverRows }] = await Promise.all([
           supabase.from('assignments')
-            .select('*, manager:profiles!assignments_manager_id_fkey(full_name)')
+            .select('*')
             .eq('assigned_to', user.id)
             .order('created_at', { ascending: false }),
           supabase.from('assignment_handovers')
@@ -168,7 +168,7 @@ export default function AssignmentsPage() {
         if (missing.length > 0) {
           const { data: extraData } = await supabase
             .from('assignments')
-            .select('*, manager:profiles!assignments_manager_id_fkey(full_name)')
+            .select('*')
             .in('id', missing)
           extra = extraData ?? []
         }
@@ -187,12 +187,27 @@ export default function AssignmentsPage() {
         if (assignmentIds.length > 0) {
           const { data } = await supabase
             .from('assignments')
-            .select('*, manager:profiles!assignments_manager_id_fkey(full_name)')
+            .select('*')
             .in('id', assignmentIds)
             .order('created_at', { ascending: false })
           assignmentsData = data ?? []
         }
       }
+
+      // Fetch manager and AM names separately (avoid RLS join issue)
+      const allProfileIds = [...new Set([
+        ...assignmentsData.map(a => a.manager_id as string),
+        ...assignmentsData.map(a => a.assigned_to as string),
+      ].filter(Boolean))]
+      const { data: profileRows } = allProfileIds.length > 0
+        ? await supabase.from('profiles').select('id, full_name').in('id', allProfileIds)
+        : { data: [] as { id: string; full_name: string }[] }
+      const profileNameMap = Object.fromEntries((profileRows ?? []).map(p => [p.id, p.full_name]))
+      assignmentsData = assignmentsData.map(a => ({
+        ...a,
+        manager: { full_name: profileNameMap[a.manager_id as string] ?? '—' },
+        assigned_to_profile: { full_name: profileNameMap[a.assigned_to as string] ?? '—' },
+      }))
 
       setAssignments(assignmentsData)
 
