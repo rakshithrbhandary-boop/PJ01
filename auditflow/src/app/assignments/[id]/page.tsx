@@ -77,6 +77,7 @@ export default function AssignmentDetailPage() {
   const [execSearch, setExecSearch] = useState('')
   const [execError, setExecError] = useState<string | null>(null)
   const [processingReturn, setProcessingReturn] = useState<string | null>(null)
+  const [reassigningTask, setReassigningTask] = useState<string | null>(null)
 
   // Bulk Excel update
   type PendingUpdate = { id: string | null; type: 'Area' | 'Sub-Area'; title: string; changes: Record<string, string>; parentId?: string; isNew?: boolean; parentTitle?: string }
@@ -145,6 +146,18 @@ export default function AssignmentDetailPage() {
       if (!parentId) return prev.filter(a => (a.id as string) !== taskId)
       return prev.map(a => a.id === parentId ? { ...a, subAreas: (a.subAreas ?? []).filter(s => (s.id as string) !== taskId) } : a)
     })
+  }
+
+  async function reassignTask(taskId: string, newExecId: string, parentId?: string) {
+    const exec = executives.find(e => e.id === newExecId)
+    if (!exec) return
+    await supabase.from('tasks').update({ assigned_to: newExecId }).eq('id', taskId)
+    setAreas(prev => prev.map(a => {
+      if (!parentId && (a.id as string) === taskId) return { ...a, assigned_to: newExecId, _assigneeName: exec.full_name }
+      if (parentId && (a.id as string) === parentId) return { ...a, subAreas: (a.subAreas ?? []).map(s => (s.id as string) === taskId ? { ...s, assigned_to: newExecId, _assigneeName: exec.full_name } : s) }
+      return a
+    }))
+    setReassigningTask(null)
   }
 
   async function addArea() {
@@ -860,9 +873,23 @@ export default function AssignmentDetailPage() {
                               <span className="text-sm font-semibold text-gray-800">{area.title as string}</span>
                               <span className="text-xs text-gray-400">({(area.subAreas ?? []).length} sub-areas)</span>
                             </div>
-                            <p className="text-xs text-gray-400 mt-0.5">
-                              → {area._assigneeName as string} · Due {area.due_date as string}
-                            </p>
+                            <div className="flex items-center gap-1 mt-0.5 text-xs text-gray-400">
+                              <span>→</span>
+                              {canManage && !isPreviousAM && reassigningTask === aId ? (
+                                <select autoFocus defaultValue={area.assigned_to as string}
+                                  onBlur={() => setReassigningTask(null)}
+                                  onChange={e => reassignTask(aId, e.target.value)}
+                                  className="border border-blue-300 rounded px-1 py-0.5 text-xs text-gray-700 focus:outline-none focus:ring-1 focus:ring-blue-400">
+                                  {executives.map(ex => <option key={ex.id} value={ex.id}>{ex.full_name}</option>)}
+                                </select>
+                              ) : (
+                                <span className={canManage && !isPreviousAM ? 'cursor-pointer hover:text-blue-500 hover:underline' : ''}
+                                  onClick={canManage && !isPreviousAM ? () => setReassigningTask(aId) : undefined}>
+                                  {area._assigneeName as string}
+                                </span>
+                              )}
+                              <span>· Due {area.due_date as string}</span>
+                            </div>
                           </div>
 
                           <div className="flex items-center gap-2">
@@ -945,8 +972,21 @@ export default function AssignmentDetailPage() {
                                 <div className="flex items-center justify-between">
                                   <div>
                                     <p className="text-sm text-gray-700 font-medium">{sub.title as string}</p>
-                                    <div className="flex items-center gap-2 text-xs text-gray-400 mt-0.5">
-                                      <span>→ {sub._assigneeName as string}</span>
+                                    <div className="flex items-center gap-1 text-xs text-gray-400 mt-0.5 flex-wrap">
+                                      <span>→</span>
+                                      {canManage && !isPreviousAM && reassigningTask === sId ? (
+                                        <select autoFocus defaultValue={sub.assigned_to as string}
+                                          onBlur={() => setReassigningTask(null)}
+                                          onChange={e => reassignTask(sId, e.target.value, aId)}
+                                          className="border border-blue-300 rounded px-1 py-0.5 text-xs text-gray-700 focus:outline-none focus:ring-1 focus:ring-blue-400">
+                                          {executives.map(ex => <option key={ex.id} value={ex.id}>{ex.full_name}</option>)}
+                                        </select>
+                                      ) : (
+                                        <span className={canManage && !isPreviousAM ? 'cursor-pointer hover:text-blue-500 hover:underline' : ''}
+                                          onClick={canManage && !isPreviousAM ? () => setReassigningTask(sId) : undefined}>
+                                          {sub._assigneeName as string}
+                                        </span>
+                                      )}
                                       {(sub.delegated_from as string) && <span className="px-1.5 py-0.5 bg-purple-50 text-purple-600 rounded font-medium">Delegated</span>}
                                       <span>· Due {sub.due_date as string}</span>
                                     </div>
