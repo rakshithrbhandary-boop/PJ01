@@ -175,10 +175,11 @@ export default function AssignmentsPage() {
         assignmentsData = [...(direct ?? []), ...extra]
 
       } else if (p?.role === 'executive') {
-        const [{ data: myTasks }, { data: myExecRows }] = await Promise.all([
+        const [{ data: myTasks }, { data: myExecRows, error: execRowsError }] = await Promise.all([
           supabase.from('tasks').select('assignment_id').eq('assigned_to', user.id),
           supabase.from('assignment_executives').select('assignment_id').eq('executive_id', user.id),
         ])
+        if (execRowsError) console.error('assignment_executives fetch error:', execRowsError)
         const assignmentIds = [...new Set([
           ...(myTasks ?? []).map(t => t.assignment_id as string),
           ...(myExecRows ?? []).map(r => r.assignment_id as string),
