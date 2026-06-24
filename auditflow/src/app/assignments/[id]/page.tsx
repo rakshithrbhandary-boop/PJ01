@@ -79,7 +79,7 @@ export default function AssignmentDetailPage() {
   const [processingReturn, setProcessingReturn] = useState<string | null>(null)
 
   // Bulk Excel update
-  type PendingUpdate = { id: string; type: 'Area' | 'Sub-Area'; title: string; changes: Record<string, string>; parentId?: string }
+  type PendingUpdate = { id: string | null; type: 'Area' | 'Sub-Area'; title: string; changes: Record<string, string>; parentId?: string; isNew?: boolean; parentTitle?: string }
   const [pendingUpdates, setPendingUpdates] = useState<PendingUpdate[]>([])
   const [showUploadPreview, setShowUploadPreview] = useState(false)
   const [applyingUpdates, setApplyingUpdates] = useState(false)
@@ -371,39 +371,60 @@ export default function AssignmentDetailPage() {
 
     const updates: PendingUpdate[] = []
     for (const row of raw) {
-      const rowId = row['ID']?.trim()
-      if (!rowId) continue
+      const rowId = row['ID']?.trim() || null
+      const areaTitle = row['Area']?.trim()
+      const subAreaTitle = row['Sub-Area']?.trim()
+      const rowType: 'Area' | 'Sub-Area' = subAreaTitle ? 'Sub-Area' : 'Area'
+      if (!areaTitle) continue
 
-      let current: AreaRow | undefined
-      let parentId: string | undefined
-      const rowType: 'Area' | 'Sub-Area' = row['Sub-Area']?.trim() ? 'Sub-Area' : 'Area'
-      for (const area of areas) {
-        if ((area.id as string) === rowId) { current = area; break }
-        for (const sub of area.subAreas ?? []) {
-          if ((sub.id as string) === rowId) { current = sub; parentId = area.id as string; break }
-        }
-        if (current) break
-      }
-      if (!current) continue
-
-      const changes: Record<string, string> = {}
       const newAssignee = row['Assigned To Executive']?.trim()
       const exec = executives.find(e => e.full_name === newAssignee)
-      if (exec && exec.id !== (current.assigned_to as string)) changes.assigned_to = exec.id
-
       const priorityVal = row['Priority']?.trim()
-      if (priorityVal && priorityVal !== (current.priority as string)) changes.priority = priorityVal
-
       const dueVal = row['Due Date (YYYY-MM-DD)']?.trim()
-      if (dueVal && dueVal !== (current.due_date as string)) changes.due_date = dueVal
 
-      if (Object.keys(changes).length > 0) {
-        updates.push({ id: rowId, type: rowType, title: current.title as string, changes, parentId })
+      if (rowId) {
+        // Existing row — check for changes
+        let current: AreaRow | undefined
+        let parentId: string | undefined
+        for (const area of areas) {
+          if ((area.id as string) === rowId) { current = area; break }
+          for (const sub of area.subAreas ?? []) {
+            if ((sub.id as string) === rowId) { current = sub; parentId = area.id as string; break }
+          }
+          if (current) break
+        }
+        if (!current) continue
+        const changes: Record<string, string> = {}
+        if (exec && exec.id !== (current.assigned_to as string)) changes.assigned_to = exec.id
+        if (priorityVal && priorityVal !== (current.priority as string)) changes.priority = priorityVal
+        if (dueVal && dueVal !== (current.due_date as string)) changes.due_date = dueVal
+        if (Object.keys(changes).length > 0) {
+          updates.push({ id: rowId, type: rowType, title: current.title as string, changes, parentId })
+        }
+      } else {
+        // New row — create it
+        if (!exec || !dueVal) continue // must have assignee and due date
+        const titleForNew = rowType === 'Sub-Area' ? subAreaTitle : areaTitle
+        const parentArea = rowType === 'Sub-Area' ? areas.find(a => (a.title as string) === areaTitle) : undefined
+        if (rowType === 'Sub-Area' && !parentArea) continue // can't find parent area
+        updates.push({
+          id: null,
+          isNew: true,
+          type: rowType,
+          title: titleForNew,
+          parentTitle: rowType === 'Sub-Area' ? areaTitle : undefined,
+          parentId: parentArea ? (parentArea.id as string) : undefined,
+          changes: {
+            assigned_to: exec.id,
+            priority: priorityVal || 'medium',
+            due_date: dueVal,
+          },
+        })
       }
     }
 
     if (updates.length === 0) {
-      alert('No changes detected in the uploaded file.')
+      alert('No changes or new rows detected. Make sure Assigned To and Due Date are filled for new rows.')
       return
     }
     setPendingUpdates(updates)
@@ -414,7 +435,17 @@ export default function AssignmentDetailPage() {
   async function applyBulkUpdates() {
     setApplyingUpdates(true)
     for (const u of pendingUpdates) {
-      await supabase.from('tasks').update(u.changes).eq('id', u.id)
+      if (u.isNew) {
+        await supabase.from('tasks').insert({
+          assignment_id: id as string,
+          title: u.title,
+          parent_id: u.parentId ?? null,
+          status: 'not_started',
+          ...u.changes,
+        })
+      } else {
+        await supabase.from('tasks').update(u.changes).eq('id', u.id)
+      }
     }
     // Refresh areas in state
     const { data: allTasks } = await supabase.from('tasks').select('*').eq('assignment_id', id as string).order('created_at')
@@ -977,11 +1008,15 @@ export default function AssignmentDetailPage() {
               <p className="text-sm text-gray-500 mt-0.5">{pendingUpdates.length} row{pendingUpdates.length !== 1 ? 's' : ''} will be updated</p>
             </div>
             <div className="overflow-y-auto flex-1 divide-y divide-gray-50">
-              {pendingUpdates.map(u => (
-                <div key={u.id} className="px-6 py-3">
+              {pendingUpdates.map((u, i) => (
+                <div key={i} className="px-6 py-3">
                   <div className="flex items-center gap-2 mb-1">
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${u.type === 'Area' ? 'bg-blue-100 text-blue-700' : 'bg-indigo-100 text-indigo-700'}`}>{u.type}</span>
+                    {u.isNew
+                      ? <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-green-100 text-green-700">+ New {u.type}</span>
+                      : <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${u.type === 'Area' ? 'bg-blue-100 text-blue-700' : 'bg-indigo-100 text-indigo-700'}`}>Edit {u.type}</span>
+                    }
                     <span className="text-sm font-semibold text-gray-800">{u.title}</span>
+                    {u.parentTitle && <span className="text-xs text-gray-400">under {u.parentTitle}</span>}
                   </div>
                   <div className="space-y-0.5">
                     {Object.entries(u.changes).map(([field, val]) => {
