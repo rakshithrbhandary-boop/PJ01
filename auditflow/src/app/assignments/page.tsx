@@ -132,6 +132,7 @@ export default function AssignmentsPage() {
   const [loadingOverview, setLoadingOverview] = useState<Record<string, boolean>>({})
   const [progressByAssignment, setProgressByAssignment] = useState<Record<string, ProgressData>>({})
   const [currentAMByAssignment, setCurrentAMByAssignment] = useState<Record<string, string>>({})
+  const [currentAMIdByAssignment, setCurrentAMIdByAssignment] = useState<Record<string, string>>({})
 
   useEffect(() => {
     async function load() {
@@ -194,25 +195,29 @@ export default function AssignmentsPage() {
         const [{ data: allTasks }, { data: allObs }, { data: allHandovers }] = await Promise.all([
           supabase.from('tasks').select('assignment_id, parent_id, status').in('assignment_id', allIds),
           supabase.from('observations').select('assignment_id, status').in('assignment_id', allIds),
-          supabase.from('assignment_handovers').select('assignment_id, to_am_name, created_at').in('assignment_id', allIds).order('created_at'),
+          supabase.from('assignment_handovers').select('assignment_id, to_am_id, to_am_name, created_at').in('assignment_id', allIds).order('created_at'),
         ])
         const progressMap: Record<string, ProgressData> = {}
         const amMap: Record<string, string> = {}
+        const amIdMap: Record<string, string> = {}
         for (const aId of allIds) {
           const tasks = (allTasks ?? []).filter(t => t.assignment_id === aId)
           const obs = (allObs ?? []).filter(o => o.assignment_id === aId)
           progressMap[aId] = computeProgress(tasks, obs)
-          // Last handover's to_am_name = current AM; fall back to assigned_to_profile
           const handoversForA = (allHandovers ?? []).filter(h => h.assignment_id === aId)
           if (handoversForA.length > 0) {
-            amMap[aId] = handoversForA[handoversForA.length - 1].to_am_name
+            const last = handoversForA[handoversForA.length - 1]
+            amMap[aId] = last.to_am_name
+            amIdMap[aId] = last.to_am_id
           } else {
             const asgn = assignmentsData.find(a => a.id === aId)
             amMap[aId] = (asgn?.assigned_to_profile as { full_name?: string } | null)?.full_name ?? '—'
+            amIdMap[aId] = (asgn?.assigned_to as string) ?? ''
           }
         }
         setProgressByAssignment(progressMap)
         setCurrentAMByAssignment(amMap)
+        setCurrentAMIdByAssignment(amIdMap)
       }
 
       setLoading(false)
@@ -393,17 +398,20 @@ export default function AssignmentsPage() {
                         </td>
                         <td className="px-4 py-4 text-sm text-gray-600">{TYPE_LABELS[a.type as string] ?? a.type as string}</td>
                         <td className="px-4 py-4">
-                          {isManagerOrAssistant ? (
-                            <select value={a.status as string} onChange={e => updateStatus(aId, e.target.value)}
-                              disabled={updatingStatus === aId}
-                              className={`text-xs font-medium px-2.5 py-1 rounded-full border-0 cursor-pointer ${STATUS_COLORS[a.status as string] ?? 'bg-gray-100'}`}>
-                              {allStatuses.map(([val, label]) => <option key={val} value={val}>{label}</option>)}
-                            </select>
-                          ) : (
-                            <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${STATUS_COLORS[a.status as string] ?? 'bg-gray-100'}`}>
-                              {STATUS_LABELS[a.status as string] ?? a.status as string}
-                            </span>
-                          )}
+                          {(() => {
+                            const canEdit = isManager || (isManagerOrAssistant && currentAMIdByAssignment[aId] === profile?.id)
+                            return canEdit ? (
+                              <select value={a.status as string} onChange={e => updateStatus(aId, e.target.value)}
+                                disabled={updatingStatus === aId}
+                                className={`text-xs font-medium px-2.5 py-1 rounded-full border-0 cursor-pointer ${STATUS_COLORS[a.status as string] ?? 'bg-gray-100'}`}>
+                                {allStatuses.map(([val, label]) => <option key={val} value={val}>{label}</option>)}
+                              </select>
+                            ) : (
+                              <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${STATUS_COLORS[a.status as string] ?? 'bg-gray-100'}`}>
+                                {STATUS_LABELS[a.status as string] ?? a.status as string}
+                              </span>
+                            )
+                          })()}
                         </td>
                         <td className={`px-4 py-4 text-sm ${dueDateClass(a.due_date as string, aStatus)}`}>{(a.due_date as string) || '—'}</td>
                         <td className="px-4 py-4 text-sm text-gray-600">
