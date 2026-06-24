@@ -22,16 +22,14 @@ const ROLE_COLORS: Record<string, string> = {
   assistant_manager: 'bg-indigo-100 text-indigo-700',
 }
 const EXEC_RESP_LABELS: Record<string, string> = {
-  acknowledged: '✓ Acknowledged',
-  in_progress: '⏳ Working on it',
-  clarification_needed: '❓ Clarification Needed',
-  disagree: '✗ Disagree',
+  acknowledged: '✓ Acknowledged & In Progress',
+  clarification_needed: '⏳ Clarification Pending from Management',
+  disagree: '✔ Completed',
 }
 const EXEC_RESP_COLORS: Record<string, string> = {
-  acknowledged: 'bg-green-100 text-green-700',
-  in_progress: 'bg-blue-100 text-blue-700',
+  acknowledged: 'bg-blue-100 text-blue-700',
   clarification_needed: 'bg-yellow-100 text-yellow-700',
-  disagree: 'bg-red-100 text-red-700',
+  disagree: 'bg-green-100 text-green-700',
 }
 
 type Comment = { id: string; comment: string; commenter_name: string; commenter_role: string; created_at: string }
@@ -303,10 +301,9 @@ export default function ObservationsPage() {
                                         }}
                                         className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
                                         <option value="">— Select response —</option>
-                                        <option value="acknowledged">✓ Acknowledged</option>
-                                        <option value="in_progress">⏳ Working on it</option>
-                                        <option value="clarification_needed">❓ Clarification Needed</option>
-                                        <option value="disagree">✗ Disagree</option>
+                                        <option value="acknowledged">✓ Acknowledged & In Progress</option>
+                                        <option value="clarification_needed">⏳ Clarification Pending from Management</option>
+                                        <option value="disagree">✔ Completed</option>
                                       </select>
                                       {savingExec === oId && <span className="text-gray-400 text-sm">Saving...</span>}
                                       {execResponses[oId] && savingExec !== oId && <span className="text-green-600 text-sm">✓ Saved</span>}
