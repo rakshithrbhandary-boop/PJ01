@@ -51,12 +51,11 @@ function computeProgress(
   const areas = tasks.filter(t => !t.parent_id)
   const subAreas = tasks.filter(t => !!t.parent_id)
 
-  const areasPct = areas.length > 0 ? (areas.filter(t => t.status === 'completed').length / areas.length) * 100 : null
-  const subAreasPct = subAreas.length > 0 ? (subAreas.filter(t => t.status === 'completed').length / subAreas.length) * 100 : null
-  const obsPct = obs.length > 0 ? (obs.filter(o => o.status !== 'open').length / obs.length) * 100 : null
+  const areasPct = areas.length > 0 ? (areas.filter(t => t.status === 'completed').length / areas.length) * 100 : 0
+  const subAreasPct = subAreas.length > 0 ? (subAreas.filter(t => t.status === 'completed').length / subAreas.length) * 100 : 0
+  const obsPct = obs.length > 0 ? (obs.filter(o => o.status !== 'open').length / obs.length) * 100 : 0
 
-  const parts = [areasPct, subAreasPct, obsPct].filter(v => v !== null) as number[]
-  const pct = parts.length > 0 ? Math.round(parts.reduce((a, b) => a + b, 0) / parts.length) : 0
+  const pct = Math.round(areasPct * 0.30 + subAreasPct * 0.60 + obsPct * 0.10)
 
   return { pct, areasPct, subAreasPct, obsPct }
 }
