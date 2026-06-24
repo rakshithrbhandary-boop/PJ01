@@ -136,22 +136,19 @@ export default function AssignmentsPage() {
 
   useEffect(() => {
     async function load() {
-      const { data: { user }, error: authErr } = await supabase.auth.getUser()
-      console.log('[assignments] auth user:', user?.id, authErr)
+      const { data: { user } } = await supabase.auth.getUser()
       if (!user) { setLoading(false); return }
-      const { data: p, error: profileErr } = await supabase.from('profiles').select('*').eq('id', user.id).single()
-      console.log('[assignments] profile:', p?.role, profileErr)
+      const { data: p } = await supabase.from('profiles').select('*').eq('id', user.id).single()
       setProfile(p)
 
       let assignmentsData: Record<string, unknown>[] = []
 
       if (p?.role === 'manager') {
-        const { data, error: aErr } = await supabase
+        const { data } = await supabase
           .from('assignments')
           .select('*')
           .eq('manager_id', user.id)
           .order('created_at', { ascending: false })
-        console.log('[assignments] manager query result:', data?.length, aErr)
         assignmentsData = data ?? []
 
       } else if (p?.role === 'assistant_manager') {
