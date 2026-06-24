@@ -1,5 +1,6 @@
 'use client'
 import Link from 'next/link'
+import Image from 'next/image'
 import { usePathname, useRouter } from 'next/navigation'
 import { signOut } from '@/lib/auth'
 import type { Profile } from '@/lib/supabase'
@@ -33,7 +34,7 @@ export default function Sidebar({ profile }: { profile: Profile | null }) {
     <aside className="w-64 bg-gray-900 min-h-screen flex flex-col">
       <div className="p-6 border-b border-gray-700">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center text-white font-bold text-sm">A</div>
+          <Image src="/logo.png" alt="AuditFlow" width={36} height={36} className="rounded-lg object-contain" />
           <div>
             <h1 className="text-white font-bold text-lg leading-none">AuditFlow</h1>
             <p className="text-gray-400 text-xs mt-0.5">Management System</p>
