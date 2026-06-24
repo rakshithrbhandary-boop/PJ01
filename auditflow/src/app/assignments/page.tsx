@@ -37,6 +37,67 @@ const AREA_STATUS_COLORS: Record<string, string> = {
   on_hold: 'bg-yellow-100 text-yellow-700',
 }
 
+interface ProgressData {
+  pct: number
+  areasPct: number | null
+  subAreasPct: number | null
+  obsPct: number | null
+}
+
+function computeProgress(
+  tasks: { parent_id: string | null; status: string }[],
+  obs: { status: string }[],
+): ProgressData {
+  const areas = tasks.filter(t => !t.parent_id)
+  const subAreas = tasks.filter(t => !!t.parent_id)
+
+  const areasPct = areas.length > 0 ? (areas.filter(t => t.status === 'completed').length / areas.length) * 100 : null
+  const subAreasPct = subAreas.length > 0 ? (subAreas.filter(t => t.status === 'completed').length / subAreas.length) * 100 : null
+  const obsPct = obs.length > 0 ? (obs.filter(o => o.status !== 'open').length / obs.length) * 100 : null
+
+  const parts = [areasPct, subAreasPct, obsPct].filter(v => v !== null) as number[]
+  const pct = parts.length > 0 ? Math.round(parts.reduce((a, b) => a + b, 0) / parts.length) : 0
+
+  return { pct, areasPct, subAreasPct, obsPct }
+}
+
+function rowBorderClass(dueDate: string | null | undefined, status: string): string {
+  if (status === 'completed') return 'border-l-4 border-l-green-400'
+  if (!dueDate) return ''
+  const days = Math.ceil((new Date(dueDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+  if (days < 0) return 'border-l-4 border-l-red-500'
+  if (days <= 7) return 'border-l-4 border-l-orange-400'
+  if (days <= 30) return 'border-l-4 border-l-yellow-400'
+  return ''
+}
+
+function dueDateClass(dueDate: string | null | undefined, status: string): string {
+  if (status === 'completed') return 'text-green-600'
+  if (!dueDate) return 'text-gray-400'
+  const days = Math.ceil((new Date(dueDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+  if (days < 0) return 'text-red-600 font-semibold'
+  if (days <= 7) return 'text-orange-500 font-semibold'
+  if (days <= 30) return 'text-yellow-600'
+  return 'text-gray-600'
+}
+
+function ProgressBar({ pct, status }: { pct: number; status: string }) {
+  const barColor =
+    status === 'completed' ? 'bg-green-500' :
+    pct >= 67 ? 'bg-blue-500' :
+    pct >= 34 ? 'bg-amber-400' :
+    'bg-red-400'
+
+  return (
+    <div className="flex items-center gap-2 mt-1.5">
+      <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden max-w-[120px]">
+        <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${pct}%` }} />
+      </div>
+      <span className={`text-xs font-medium ${barColor.replace('bg-', 'text-')}`}>{pct}%</span>
+    </div>
+  )
+}
+
 interface OverviewData {
   areas: Record<string, unknown>[]
   observations: Record<string, unknown>[]
@@ -69,6 +130,7 @@ export default function AssignmentsPage() {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   const [overviewByAssignment, setOverviewByAssignment] = useState<Record<string, OverviewData>>({})
   const [loadingOverview, setLoadingOverview] = useState<Record<string, boolean>>({})
+  const [progressByAssignment, setProgressByAssignment] = useState<Record<string, ProgressData>>({})
 
   useEffect(() => {
     async function load() {
@@ -124,6 +186,23 @@ export default function AssignmentsPage() {
       }
 
       setAssignments(assignmentsData)
+
+      // Bulk fetch tasks + observations for progress bars
+      const allIds = assignmentsData.map(a => a.id as string)
+      if (allIds.length > 0) {
+        const [{ data: allTasks }, { data: allObs }] = await Promise.all([
+          supabase.from('tasks').select('assignment_id, parent_id, status').in('assignment_id', allIds),
+          supabase.from('observations').select('assignment_id, status').in('assignment_id', allIds),
+        ])
+        const progressMap: Record<string, ProgressData> = {}
+        for (const aId of allIds) {
+          const tasks = (allTasks ?? []).filter(t => t.assignment_id === aId)
+          const obs = (allObs ?? []).filter(o => o.assignment_id === aId)
+          progressMap[aId] = computeProgress(tasks, obs)
+        }
+        setProgressByAssignment(progressMap)
+      }
+
       setLoading(false)
     }
     load()
@@ -269,10 +348,12 @@ export default function AssignmentsPage() {
                   const overview = overviewByAssignment[aId]
                   const isLoadingOv = loadingOverview[aId]
                   const days = daysUntil(a.due_date as string)
+                  const progress = progressByAssignment[aId]
+                  const aStatus = a.status as string
 
                   return (
                     <>
-                      <tr key={aId} className="border-t border-gray-50 hover:bg-gray-50">
+                      <tr key={aId} className={`border-t border-gray-50 hover:bg-gray-50 ${rowBorderClass(a.due_date as string, aStatus)}`}>
                         <td className="px-3 py-4">
                           <button onClick={() => toggleExpand(aId)}
                             className="w-6 h-6 flex items-center justify-center rounded hover:bg-gray-200 transition-colors text-gray-400">
@@ -294,6 +375,9 @@ export default function AssignmentsPage() {
                             )}
                           </div>
                           <p className="text-sm text-gray-500">{a.client_name as string}</p>
+                          {progress !== undefined && (
+                            <ProgressBar pct={aStatus === 'completed' ? 100 : progress.pct} status={aStatus} />
+                          )}
                         </td>
                         <td className="px-4 py-4 text-sm text-gray-600">{TYPE_LABELS[a.type as string] ?? a.type as string}</td>
                         <td className="px-4 py-4">
@@ -309,7 +393,7 @@ export default function AssignmentsPage() {
                             </span>
                           )}
                         </td>
-                        <td className="px-4 py-4 text-sm text-gray-600">{(a.due_date as string) || '—'}</td>
+                        <td className={`px-4 py-4 text-sm ${dueDateClass(a.due_date as string, aStatus)}`}>{(a.due_date as string) || '—'}</td>
                         <td className="px-4 py-4 text-sm text-gray-600">{(a.manager as { full_name?: string })?.full_name ?? '—'}</td>
                         {isManager && (
                           <td className="px-4 py-4">
