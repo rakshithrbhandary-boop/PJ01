@@ -62,6 +62,13 @@ export default function AssignmentDetailPage() {
   const [savingHandover, setSavingHandover] = useState(false)
   const [handoverHistory, setHandoverHistory] = useState<Record<string, unknown>[]>([])
 
+  // Return request
+  const [returnRequests, setReturnRequests] = useState<Record<string, unknown>[]>([])
+  const [showReturnModal, setShowReturnModal] = useState(false)
+  const [returnReason, setReturnReason] = useState('')
+  const [savingReturn, setSavingReturn] = useState(false)
+  const [processingReturn, setProcessingReturn] = useState<string | null>(null)
+
   useEffect(() => {
     async function load() {
       const { data: { user } } = await supabase.auth.getUser()
@@ -69,19 +76,21 @@ export default function AssignmentDetailPage() {
         const { data: p } = await supabase.from('profiles').select('*').eq('id', user.id).single()
         setCurrentProfile(p)
       }
-      const [{ data: a }, { data: allTasks }, { data: o }, { data: ex }, { data: ams }, { data: hist }] = await Promise.all([
+      const [{ data: a }, { data: allTasks }, { data: o }, { data: ex }, { data: ams }, { data: hist }, { data: retReqs }] = await Promise.all([
         supabase.from('assignments').select('*, manager:profiles!assignments_manager_id_fkey(full_name), assigned_to_profile:profiles!assignments_assigned_to_fkey(full_name)').eq('id', id).single(),
         supabase.from('tasks').select('*').eq('assignment_id', id).order('created_at'),
         supabase.from('observations').select('*').eq('assignment_id', id).order('created_at', { ascending: false }),
         supabase.from('profiles').select('id, full_name').eq('role', 'executive'),
         supabase.from('profiles').select('id, full_name').eq('role', 'assistant_manager'),
         supabase.from('assignment_handovers').select('*').eq('assignment_id', id).order('created_at'),
+        supabase.from('assignment_return_requests').select('*').eq('assignment_id', id).order('created_at', { ascending: false }),
       ])
       setAssignment(a)
       setObservations(o ?? [])
       setExecutives(ex ?? [])
       setOtherAMs(ams ?? [])
       setHandoverHistory(hist ?? [])
+      setReturnRequests(retReqs ?? [])
 
       // Resolve assignee names
       const taskList = allTasks ?? []
@@ -210,6 +219,51 @@ export default function AssignmentDetailPage() {
     setSavingHandover(false)
   }
 
+  async function requestReturn() {
+    if (!currentProfile) return
+    setSavingReturn(true)
+    const { data: newReq } = await supabase.from('assignment_return_requests').insert({
+      assignment_id: id as string,
+      requested_by_id: currentProfile.id,
+      requested_by_name: currentProfile.full_name,
+      reason: returnReason || null,
+      status: 'pending',
+    }).select().single()
+    if (newReq) setReturnRequests(prev => [newReq, ...prev])
+    setShowReturnModal(false)
+    setReturnReason('')
+    setSavingReturn(false)
+  }
+
+  async function acceptReturn(requestId: string, requestedById: string, requestedByName: string) {
+    if (!currentProfile) return
+    setProcessingReturn(requestId)
+    // Create reverse handover record
+    const record = {
+      assignment_id: id as string,
+      from_am_id: currentProfile.id,
+      from_am_name: currentProfile.full_name,
+      to_am_id: requestedById,
+      to_am_name: requestedByName,
+      handover_type: 'return',
+      reason: 'Return request accepted',
+    }
+    const { data: newHistory } = await supabase.from('assignment_handovers').insert(record).select().single()
+    await supabase.from('assignments').update({ assigned_to: requestedById }).eq('id', id as string)
+    await supabase.from('assignment_return_requests').update({ status: 'accepted' }).eq('id', requestId)
+    if (newHistory) setHandoverHistory(prev => [...prev, newHistory])
+    setAssignment(prev => prev ? { ...prev, assigned_to: requestedById } : prev)
+    setReturnRequests(prev => prev.map(r => r.id === requestId ? { ...r, status: 'accepted' } : r))
+    setProcessingReturn(null)
+  }
+
+  async function declineReturn(requestId: string) {
+    setProcessingReturn(requestId)
+    await supabase.from('assignment_return_requests').update({ status: 'declined' }).eq('id', requestId)
+    setReturnRequests(prev => prev.map(r => r.id === requestId ? { ...r, status: 'declined' } : r))
+    setProcessingReturn(null)
+  }
+
   if (loading) return <AppShell><div className="py-12 text-center text-gray-400">Loading...</div></AppShell>
   if (!assignment) return <AppShell><div className="py-12 text-center text-gray-400">Assignment not found</div></AppShell>
 
@@ -237,6 +291,10 @@ export default function AssignmentDetailPage() {
     ...areas.flatMap(a => (a.subAreas ?? []).map(s => s.assigned_to as string)),
   ].filter(Boolean))
   const involvedExecutives = executives.filter(e => allAssignedIds.has(e.id))
+
+  const pendingReturnRequest = returnRequests.find(r => r.status === 'pending')
+  const myPendingRequest = isPreviousAM && pendingReturnRequest && (pendingReturnRequest.requested_by_id as string) === currentProfile?.id
+  const incomingReturnRequest = isCurrentAM && pendingReturnRequest
 
   const totalSubAreas = areas.reduce((n, a) => n + (a.subAreas?.length ?? 0), 0)
   const completedSubAreas = areas.reduce((n, a) => n + (a.subAreas ?? []).filter(s => s.status === 'completed').length, 0)
@@ -271,6 +329,17 @@ export default function AssignmentDetailPage() {
             <span className={`text-sm font-medium px-3 py-1.5 rounded-full capitalize ${STATUS_COLORS[assignment.status as string] ?? 'bg-gray-100'}`}>
               {(assignment.status as string).replace(/_/g, ' ')}
             </span>
+            {isPreviousAM && !myPendingRequest && (
+              <button onClick={() => setShowReturnModal(true)}
+                className="text-sm text-green-700 border border-green-200 px-3 py-1.5 rounded-lg hover:bg-green-50">
+                Request Return
+              </button>
+            )}
+            {myPendingRequest && (
+              <span className="text-xs text-green-700 bg-green-50 border border-green-200 px-3 py-1.5 rounded-lg font-medium">
+                Return Requested ·  Awaiting response
+              </span>
+            )}
             {isCurrentAM && (
               <button onClick={() => setShowHandover(true)} className="text-sm text-orange-600 border border-orange-200 px-3 py-1.5 rounded-lg hover:bg-orange-50">Handover</button>
             )}
@@ -308,6 +377,36 @@ export default function AssignmentDetailPage() {
             <p className="font-medium text-gray-900 mt-1">{(assignment.due_date as string) || 'Always Active'}</p>
           </div>
         </div>
+
+        {/* Incoming return request banner for current AM */}
+        {incomingReturnRequest && (
+          <div className="mb-6 bg-green-50 border border-green-200 rounded-xl p-4 flex items-start gap-4">
+            <div className="text-2xl">↩️</div>
+            <div className="flex-1">
+              <p className="font-semibold text-green-900 text-sm">Return Request from {incomingReturnRequest.requested_by_name as string}</p>
+              {(incomingReturnRequest.reason as string) && (
+                <p className="text-green-700 text-xs mt-0.5 italic">"{incomingReturnRequest.reason as string}"</p>
+              )}
+              <p className="text-green-600 text-xs mt-1">
+                Requested {new Date(incomingReturnRequest.created_at as string).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => acceptReturn(incomingReturnRequest.id as string, incomingReturnRequest.requested_by_id as string, incomingReturnRequest.requested_by_name as string)}
+                disabled={processingReturn === (incomingReturnRequest.id as string)}
+                className="text-sm font-medium bg-green-600 text-white px-4 py-1.5 rounded-lg hover:bg-green-700 disabled:opacity-50">
+                {processingReturn === (incomingReturnRequest.id as string) ? 'Processing...' : 'Accept'}
+              </button>
+              <button
+                onClick={() => declineReturn(incomingReturnRequest.id as string)}
+                disabled={processingReturn === (incomingReturnRequest.id as string)}
+                className="text-sm font-medium text-red-600 border border-red-200 px-4 py-1.5 rounded-lg hover:bg-red-50 disabled:opacity-50">
+                Decline
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Flow overview for manager/AM */}
         {(isManagerOfThis || isCurrentAM || isPreviousAM) && (
@@ -641,6 +740,36 @@ export default function AssignmentDetailPage() {
           </div>
         )}
       </div>
+
+      {/* Return Request Modal */}
+      {showReturnModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4 p-6">
+            <h2 className="text-lg font-bold text-gray-900 mb-1">Request Return of Assignment</h2>
+            <p className="text-sm text-gray-500 mb-4">
+              This will notify the current AM ({assignedToName}) who can accept or decline.
+            </p>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Reason (optional)</label>
+                <textarea value={returnReason} onChange={e => setReturnReason(e.target.value)}
+                  rows={3} placeholder="e.g. Leave period ended, ready to resume"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 resize-none" />
+              </div>
+            </div>
+            <div className="flex gap-3 mt-5">
+              <button onClick={requestReturn} disabled={savingReturn}
+                className="flex-1 bg-green-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-green-700 disabled:opacity-50">
+                {savingReturn ? 'Sending...' : 'Send Return Request'}
+              </button>
+              <button onClick={() => { setShowReturnModal(false); setReturnReason('') }}
+                className="flex-1 text-gray-600 border border-gray-300 py-2 rounded-lg text-sm font-medium hover:bg-gray-50">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Handover Modal */}
       {showHandover && (
