@@ -437,15 +437,24 @@ export default function AssignmentDetailPage() {
           continue
         }
         const titleForNew = rowType === 'Sub-Area' ? subAreaTitle : areaTitle
-        const parentArea = rowType === 'Sub-Area' ? areas.find(a => (a.title as string) === areaTitle) : undefined
-        if (rowType === 'Sub-Area' && !parentArea) { skipped.push(`"${subAreaTitle}" — parent area "${areaTitle}" not found`); continue }
+        // Parent area may exist in DB or may be a new area earlier in this same upload batch
+        const parentArea = rowType === 'Sub-Area'
+          ? areas.find(a => (a.title as string) === areaTitle)
+          : undefined
+        const parentInBatch = rowType === 'Sub-Area' && !parentArea
+          ? updates.find(u => u.isNew && u.type === 'Area' && u.title === areaTitle)
+          : undefined
+        if (rowType === 'Sub-Area' && !parentArea && !parentInBatch) {
+          skipped.push(`"${subAreaTitle}" — parent area "${areaTitle}" not found`)
+          continue
+        }
         updates.push({
           id: null,
           isNew: true,
           type: rowType,
           title: titleForNew,
           parentTitle: rowType === 'Sub-Area' ? areaTitle : undefined,
-          parentId: parentArea ? (parentArea.id as string) : undefined,
+          parentId: parentArea ? (parentArea.id as string) : undefined, // parentInBatch resolved later in applyBulkUpdates
           changes: {
             assigned_to: exec.id,
             priority: priorityVal || 'medium',
@@ -469,15 +478,25 @@ export default function AssignmentDetailPage() {
 
   async function applyBulkUpdates() {
     setApplyingUpdates(true)
+    // Map from area title → newly inserted area ID (for resolving sub-area parents)
+    const newAreaIdByTitle: Record<string, string> = {}
     for (const u of pendingUpdates) {
       if (u.isNew) {
-        await supabase.from('tasks').insert({
+        let parentId = u.parentId ?? null
+        // If parent was also new in this batch, resolve its ID
+        if (!parentId && u.type === 'Sub-Area' && u.parentTitle) {
+          parentId = newAreaIdByTitle[u.parentTitle] ?? null
+        }
+        const { data: inserted } = await supabase.from('tasks').insert({
           assignment_id: id as string,
           title: u.title,
-          parent_id: u.parentId ?? null,
+          parent_id: parentId,
           status: 'not_started',
           ...u.changes,
-        })
+        }).select('id').single()
+        if (u.type === 'Area' && inserted?.id) {
+          newAreaIdByTitle[u.title] = inserted.id
+        }
       } else {
         await supabase.from('tasks').update(u.changes).eq('id', u.id)
       }
