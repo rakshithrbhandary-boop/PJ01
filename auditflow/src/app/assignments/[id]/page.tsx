@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { useParams, useRouter } from 'next/navigation'
+import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import AppShell from '@/components/AppShell'
 import { supabase } from '@/lib/supabase'
@@ -13,7 +13,7 @@ const STATUS_COLORS: Record<string, string> = {
   pending_clarification: 'bg-red-100 text-red-800', completed: 'bg-green-100 text-green-800',
   on_hold: 'bg-gray-100 text-gray-800',
 }
-const TASK_STATUS_COLORS: Record<string, string> = {
+const AREA_STATUS_COLORS: Record<string, string> = {
   not_started: 'bg-gray-100 text-gray-700', in_progress: 'bg-blue-100 text-blue-700',
   completed: 'bg-green-100 text-green-700', overdue: 'bg-red-100 text-red-700',
 }
@@ -22,34 +22,45 @@ const RISK_COLORS: Record<string, string> = {
   high: 'bg-orange-100 text-orange-800', critical: 'bg-red-100 text-red-800',
 }
 
+type AreaRow = Record<string, unknown> & { subAreas?: AreaRow[] }
+
 export default function AssignmentDetailPage() {
   const { id } = useParams()
-  const router = useRouter()
   const [assignment, setAssignment] = useState<Record<string, unknown> | null>(null)
-  const [tasks, setTasks] = useState<Record<string, unknown>[]>([])
+  const [areas, setAreas] = useState<AreaRow[]>([])
   const [observations, setObservations] = useState<Record<string, unknown>[]>([])
   const [currentProfile, setCurrentProfile] = useState<Profile | null>(null)
   const [executives, setExecutives] = useState<{ id: string; full_name: string }[]>([])
   const [loading, setLoading] = useState(true)
 
-  const [showTaskForm, setShowTaskForm] = useState(false)
-  const [taskForm, setTaskForm] = useState({ title: '', assigned_to: '', priority: 'medium', due_date: '' })
-  const [savingTask, setSavingTask] = useState(false)
+  // Area form (top-level)
+  const [showAreaForm, setShowAreaForm] = useState(false)
+  const [areaForm, setAreaForm] = useState({ title: '', assigned_to: '', priority: 'medium', due_date: '' })
+  const [savingArea, setSavingArea] = useState(false)
 
+  // Sub-area form (child of an area)
+  const [showSubAreaForm, setShowSubAreaForm] = useState<string | null>(null)
+  const [subAreaForm, setSubAreaForm] = useState({ title: '', assigned_to: '', priority: 'medium', due_date: '' })
+  const [savingSubArea, setSavingSubArea] = useState(false)
+
+  // Expand/collapse areas
+  const [expandedAreas, setExpandedAreas] = useState<Record<string, boolean>>({})
+
+  // Status update
+  const [updatingStatus, setUpdatingStatus] = useState<string | null>(null)
+
+  // Delegation
+  const [delegatingSubArea, setDelegatingSubArea] = useState<string | null>(null)
+  const [delegateTo, setDelegateTo] = useState('')
+  const [delegateNote, setDelegateNote] = useState('')
+  const [savingDelegate, setSavingDelegate] = useState(false)
+
+  // Handover
   const [showHandover, setShowHandover] = useState(false)
   const [otherAMs, setOtherAMs] = useState<{ id: string; full_name: string }[]>([])
   const [handoverForm, setHandoverForm] = useState({ to_am: '', type: 'temporary', return_date: '', reason: '' })
   const [savingHandover, setSavingHandover] = useState(false)
   const [handoverHistory, setHandoverHistory] = useState<Record<string, unknown>[]>([])
-
-  // Task status inline update
-  const [updatingTaskStatus, setUpdatingTaskStatus] = useState<string | null>(null)
-
-  // Task delegation
-  const [delegatingTask, setDelegatingTask] = useState<string | null>(null)
-  const [delegateTo, setDelegateTo] = useState('')
-  const [delegateNote, setDelegateNote] = useState('')
-  const [savingDelegate, setSavingDelegate] = useState(false)
 
   useEffect(() => {
     async function load() {
@@ -58,7 +69,7 @@ export default function AssignmentDetailPage() {
         const { data: p } = await supabase.from('profiles').select('*').eq('id', user.id).single()
         setCurrentProfile(p)
       }
-      const [{ data: a }, { data: t }, { data: o }, { data: ex }, { data: ams }, { data: hist }] = await Promise.all([
+      const [{ data: a }, { data: allTasks }, { data: o }, { data: ex }, { data: ams }, { data: hist }] = await Promise.all([
         supabase.from('assignments').select('*, manager:profiles!assignments_manager_id_fkey(full_name), assigned_to_profile:profiles!assignments_assigned_to_fkey(full_name)').eq('id', id).single(),
         supabase.from('tasks').select('*').eq('assignment_id', id).order('created_at'),
         supabase.from('observations').select('*').eq('assignment_id', id).order('created_at', { ascending: false }),
@@ -66,92 +77,113 @@ export default function AssignmentDetailPage() {
         supabase.from('profiles').select('id, full_name').eq('role', 'assistant_manager'),
         supabase.from('assignment_handovers').select('*').eq('assignment_id', id).order('created_at'),
       ])
-      // Resolve task assignee names separately to avoid RLS join filtering
-      const taskList = t ?? []
-      const assigneeIds = [...new Set(taskList.map((tk: Record<string, unknown>) => tk.assigned_to as string).filter(Boolean))]
+      setAssignment(a)
+      setObservations(o ?? [])
+      setExecutives(ex ?? [])
+      setOtherAMs(ams ?? [])
+      setHandoverHistory(hist ?? [])
+
+      // Resolve assignee names
+      const taskList = allTasks ?? []
+      const assigneeIds = [...new Set(taskList.map(t => t.assigned_to as string).filter(Boolean))]
       const { data: assigneeProfiles } = assigneeIds.length > 0
         ? await supabase.from('profiles').select('id, full_name').in('id', assigneeIds)
         : { data: [] as { id: string; full_name: string }[] }
       const nameMap = Object.fromEntries((assigneeProfiles ?? []).map(p => [p.id, p.full_name]))
-      const tasksWithNames = taskList.map((tk: Record<string, unknown>) => ({ ...tk, assignee: { full_name: nameMap[tk.assigned_to as string] ?? 'Unassigned' } }))
+      const withNames = taskList.map(t => ({ ...t, _assigneeName: nameMap[t.assigned_to as string] ?? 'Unassigned' }))
 
-      // Resolve observation raiser names separately
-      const obsList = o ?? []
-      const raiserIds = [...new Set(obsList.map((ob: Record<string, unknown>) => ob.raised_by as string).filter(Boolean))]
-      const { data: raiserProfiles } = raiserIds.length > 0
-        ? await supabase.from('profiles').select('id, full_name').in('id', raiserIds)
-        : { data: [] as { id: string; full_name: string }[] }
-      const raiserNameMap = Object.fromEntries((raiserProfiles ?? []).map(p => [p.id, p.full_name]))
-      const obsWithNames = obsList.map((ob: Record<string, unknown>) => ({ ...ob, raiser: { full_name: raiserNameMap[ob.raised_by as string] ?? '—' } }))
-
-      setAssignment(a)
-      setTasks(tasksWithNames)
-      setObservations(obsWithNames)
-      setExecutives(ex ?? [])
-      setOtherAMs(ams ?? [])
-      setHandoverHistory(hist ?? [])
+      // Build area → sub-area tree (parent_id IS NULL = area, parent_id SET = sub-area)
+      const topLevel = withNames.filter(t => !t.parent_id)
+      const children = withNames.filter(t => !!t.parent_id)
+      const tree: AreaRow[] = topLevel.map(a => ({
+        ...a,
+        subAreas: children.filter(c => c.parent_id === a.id),
+      }))
+      setAreas(tree)
       setLoading(false)
     }
     load()
   }, [id])
 
-  async function addTask() {
-    if (!taskForm.title || !taskForm.assigned_to || !taskForm.due_date) return
-    setSavingTask(true)
+  function buildTree(allRows: AreaRow[]) {
+    const top = allRows.filter(t => !t.parent_id)
+    const child = allRows.filter(t => !!t.parent_id)
+    return top.map(a => ({ ...a, subAreas: child.filter(c => c.parent_id === a.id) }))
+  }
+
+  async function addArea() {
+    if (!areaForm.title || !areaForm.due_date) return
+    if (!isExecutive && !areaForm.assigned_to) return
+    setSavingArea(true)
     const { data } = await supabase.from('tasks').insert({
       assignment_id: id,
-      title: taskForm.title,
-      assigned_to: taskForm.assigned_to,
-      priority: taskForm.priority,
-      due_date: taskForm.due_date,
+      title: areaForm.title,
+      assigned_to: isExecutive ? currentProfile!.id : areaForm.assigned_to,
+      priority: areaForm.priority,
+      due_date: areaForm.due_date,
       status: 'not_started',
-    }).select('*, assignee:profiles(full_name)').single()
-    if (data) setTasks(prev => [...prev, data])
-    setTaskForm({ title: '', assigned_to: '', priority: 'medium', due_date: '' })
-    setShowTaskForm(false)
-    setSavingTask(false)
+      parent_id: null,
+    }).select('*').single()
+    if (data) {
+      const nameMap = Object.fromEntries(executives.map(e => [e.id, e.full_name]))
+      const withName = { ...data, _assigneeName: nameMap[data.assigned_to] ?? 'Unassigned', subAreas: [] }
+      setAreas(prev => [...prev, withName])
+    }
+    setAreaForm({ title: '', assigned_to: '', priority: 'medium', due_date: '' })
+    setShowAreaForm(false)
+    setSavingArea(false)
   }
 
-  async function selfAssignTask() {
-    if (!taskForm.title || !taskForm.due_date || !currentProfile) return
-    setSavingTask(true)
+  async function addSubArea(parentId: string) {
+    if (!subAreaForm.title || !subAreaForm.due_date) return
+    if (!isExecutive && !subAreaForm.assigned_to) return
+    setSavingSubArea(true)
     const { data } = await supabase.from('tasks').insert({
       assignment_id: id,
-      title: taskForm.title,
-      assigned_to: currentProfile.id,
-      priority: taskForm.priority,
-      due_date: taskForm.due_date,
+      title: subAreaForm.title,
+      assigned_to: isExecutive ? currentProfile!.id : subAreaForm.assigned_to,
+      priority: subAreaForm.priority,
+      due_date: subAreaForm.due_date,
       status: 'not_started',
-    }).select('*, assignee:profiles(full_name)').single()
-    if (data) setTasks(prev => [...prev, data])
-    setTaskForm({ title: '', assigned_to: '', priority: 'medium', due_date: '' })
-    setShowTaskForm(false)
-    setSavingTask(false)
+      parent_id: parentId,
+    }).select('*').single()
+    if (data) {
+      const nameMap = Object.fromEntries(executives.map(e => [e.id, e.full_name]))
+      const withName = { ...data, _assigneeName: nameMap[data.assigned_to] ?? 'Unassigned' }
+      setAreas(prev => prev.map(a => a.id === parentId
+        ? { ...a, subAreas: [...(a.subAreas ?? []), withName] }
+        : a
+      ))
+    }
+    setSubAreaForm({ title: '', assigned_to: '', priority: 'medium', due_date: '' })
+    setShowSubAreaForm(null)
+    setSavingSubArea(false)
   }
 
-  async function updateTaskStatus(taskId: string, status: string) {
-    setUpdatingTaskStatus(taskId)
-    await supabase.from('tasks').update({ status }).eq('id', taskId)
-    setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status } : t))
-    setUpdatingTaskStatus(null)
+  async function updateAreaStatus(areaId: string, status: string, parentId?: string) {
+    setUpdatingStatus(areaId)
+    await supabase.from('tasks').update({ status }).eq('id', areaId)
+    setAreas(prev => prev.map(a => {
+      if (!parentId && a.id === areaId) return { ...a, status }
+      if (parentId && a.id === parentId) return { ...a, subAreas: (a.subAreas ?? []).map(s => s.id === areaId ? { ...s, status } : s) }
+      return a
+    }))
+    setUpdatingStatus(null)
   }
 
-  async function delegateTask() {
-    if (!delegatingTask || !delegateTo || !currentProfile) return
+  async function delegateSubArea() {
+    if (!delegatingSubArea || !delegateTo || !currentProfile) return
     setSavingDelegate(true)
-    const targetExecutive = executives.find(e => e.id === delegateTo)
-    await supabase.from('tasks').update({
-      assigned_to: delegateTo,
-      delegated_from: currentProfile.id,
-      delegation_note: delegateNote || null,
-    }).eq('id', delegatingTask)
-    setTasks(prev => prev.map(t => t.id === delegatingTask
-      ? { ...t, assigned_to: delegateTo, assignee: { full_name: targetExecutive?.full_name }, delegated_from: currentProfile.id }
-      : t
-    ))
-    setDelegatingTask(null)
-    setDelegateTo('')
-    setDelegateNote('')
+    const target = executives.find(e => e.id === delegateTo)
+    await supabase.from('tasks').update({ assigned_to: delegateTo, delegated_from: currentProfile.id, delegation_note: delegateNote || null }).eq('id', delegatingSubArea)
+    setAreas(prev => prev.map(a => ({
+      ...a,
+      subAreas: (a.subAreas ?? []).map(s => s.id === delegatingSubArea
+        ? { ...s, assigned_to: delegateTo, _assigneeName: target?.full_name ?? '', delegated_from: currentProfile.id }
+        : s
+      ),
+    })))
+    setDelegatingSubArea(null); setDelegateTo(''); setDelegateNote('')
     setSavingDelegate(false)
   }
 
@@ -188,15 +220,10 @@ export default function AssignmentDetailPage() {
   const lastHandover = handoverHistory.length > 0 ? handoverHistory[handoverHistory.length - 1] : null
   const currentHandlerId = lastHandover ? (lastHandover.to_am_id as string) : (assignment.assigned_to as string)
   const isCurrentAM = isAssistantManager && currentHandlerId === currentProfile?.id
-  // Previous AMs involved in handovers can view but not work
   const isPreviousAM = isAssistantManager && !isCurrentAM &&
     handoverHistory.some(h => h.from_am_id === currentProfile?.id || h.to_am_id === currentProfile?.id)
-
   const isManagerOfThis = isManager && (assignment.manager_id as string) === currentProfile?.id
-
-  // Who can perform actions
-  const canManageAssignment = isManagerOfThis || isCurrentAM
-  const canAddTasksAsManager = isManagerOfThis || isCurrentAM
+  const canManage = isManagerOfThis || isCurrentAM
 
   const assignedToName =
     (lastHandover ? (lastHandover.to_am_name as string) : null)
@@ -204,19 +231,15 @@ export default function AssignmentDetailPage() {
     ?? (assignment.assigned_to_profile as { full_name?: string } | null)?.full_name
   const managerName = (assignment.manager as { full_name?: string })?.full_name
 
-  // Executives involved in this assignment (have at least one task)
-  const involvedExecutiveIds = [...new Set(tasks.map(t => t.assigned_to as string).filter(Boolean))]
-  const involvedExecutives = executives.filter(e => involvedExecutiveIds.includes(e.id))
-  const isInvolvedExecutive = isExecutive && involvedExecutiveIds.includes(currentProfile?.id ?? '')
+  // Involved executives = those assigned to any area or sub-area
+  const allAssignedIds = new Set([
+    ...areas.map(a => a.assigned_to as string),
+    ...areas.flatMap(a => (a.subAreas ?? []).map(s => s.assigned_to as string)),
+  ].filter(Boolean))
+  const involvedExecutives = executives.filter(e => allAssignedIds.has(e.id))
 
-  // Group tasks by executive for manager flow view
-  const tasksByExecutive: Record<string, { name: string; tasks: Record<string, unknown>[] }> = {}
-  tasks.forEach(t => {
-    const assigneeId = t.assigned_to as string
-    const assigneeName = (t.assignee as { full_name?: string })?.full_name ?? 'Unassigned'
-    if (!tasksByExecutive[assigneeId]) tasksByExecutive[assigneeId] = { name: assigneeName, tasks: [] }
-    tasksByExecutive[assigneeId].tasks.push(t)
-  })
+  const totalSubAreas = areas.reduce((n, a) => n + (a.subAreas?.length ?? 0), 0)
+  const completedSubAreas = areas.reduce((n, a) => n + (a.subAreas ?? []).filter(s => s.status === 'completed').length, 0)
 
   return (
     <AppShell>
@@ -241,9 +264,7 @@ export default function AssignmentDetailPage() {
             </div>
             <p className="text-gray-500 mt-1">{assignment.client_name as string}</p>
             {isPreviousAM && (
-              <p className="text-xs text-orange-600 mt-1 font-medium">
-                View only — this assignment has been handed over to {assignedToName}
-              </p>
+              <p className="text-xs text-orange-600 mt-1 font-medium">View only — handed over to {assignedToName}</p>
             )}
           </div>
           <div className="flex items-center gap-3">
@@ -251,14 +272,10 @@ export default function AssignmentDetailPage() {
               {(assignment.status as string).replace(/_/g, ' ')}
             </span>
             {isCurrentAM && (
-              <button onClick={() => setShowHandover(true)} className="text-sm text-orange-600 border border-orange-200 px-3 py-1.5 rounded-lg hover:bg-orange-50">
-                Handover
-              </button>
+              <button onClick={() => setShowHandover(true)} className="text-sm text-orange-600 border border-orange-200 px-3 py-1.5 rounded-lg hover:bg-orange-50">Handover</button>
             )}
             {isManagerOfThis && (
-              <Link href={`/assignments/${id}/edit`} className="text-sm text-blue-600 border border-blue-200 px-3 py-1.5 rounded-lg hover:bg-blue-50">
-                Edit
-              </Link>
+              <Link href={`/assignments/${id}/edit`} className="text-sm text-blue-600 border border-blue-200 px-3 py-1.5 rounded-lg hover:bg-blue-50">Edit</Link>
             )}
           </div>
         </div>
@@ -277,9 +294,7 @@ export default function AssignmentDetailPage() {
             <p className="text-xs text-gray-500 uppercase tracking-wider">Currently Handled By (AM)</p>
             <div className="flex items-center gap-2 mt-1">
               <p className="font-medium text-gray-900">{assignedToName ?? 'Unassigned'}</p>
-              {handoverHistory.length > 0 && (
-                <span className="text-xs px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-700 font-medium">Handed Over</span>
-              )}
+              {handoverHistory.length > 0 && <span className="text-xs px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-700 font-medium">Handed Over</span>}
             </div>
             {lastHandover && (
               <p className="text-xs text-gray-400 mt-0.5">
@@ -294,15 +309,13 @@ export default function AssignmentDetailPage() {
           </div>
         </div>
 
-        {/* Assignment Flow — Manager/AM Overview */}
+        {/* Flow overview for manager/AM */}
         {(isManagerOfThis || isCurrentAM || isPreviousAM) && (
           <div className="bg-white rounded-xl border border-gray-100 shadow-sm mb-6 p-6">
             <h3 className="font-semibold text-gray-900 mb-4">Assignment Flow</h3>
             <div className="flex items-start gap-4">
               <div className="text-center">
-                <div className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center text-white font-bold text-sm mx-auto mb-1">
-                  {managerName?.[0]?.toUpperCase() ?? 'M'}
-                </div>
+                <div className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center text-white font-bold text-sm mx-auto mb-1">{managerName?.[0]?.toUpperCase() ?? 'M'}</div>
                 <p className="text-xs font-medium text-gray-700">{managerName}</p>
                 <p className="text-xs text-gray-400">Manager</p>
               </div>
@@ -317,7 +330,7 @@ export default function AssignmentDetailPage() {
                 <p className="text-xs text-gray-400">Asst. Manager</p>
               </div>
               <div className="flex-1 mt-4 border-t-2 border-dashed border-gray-200 relative">
-                <span className="absolute -top-2 left-1/2 -translate-x-1/2 text-xs text-gray-400 bg-white px-1">tasks to</span>
+                <span className="absolute -top-2 left-1/2 -translate-x-1/2 text-xs text-gray-400 bg-white px-1">areas to</span>
               </div>
               <div className="flex gap-3">
                 {involvedExecutives.length === 0 ? (
@@ -327,11 +340,9 @@ export default function AssignmentDetailPage() {
                   </div>
                 ) : involvedExecutives.map(ex => (
                   <div key={ex.id} className="text-center">
-                    <div className="w-10 h-10 bg-emerald-500 rounded-full flex items-center justify-center text-white font-bold text-sm mx-auto mb-1">
-                      {ex.full_name[0].toUpperCase()}
-                    </div>
+                    <div className="w-10 h-10 bg-emerald-500 rounded-full flex items-center justify-center text-white font-bold text-sm mx-auto mb-1">{ex.full_name[0].toUpperCase()}</div>
                     <p className="text-xs font-medium text-gray-700">{ex.full_name}</p>
-                    <p className="text-xs text-gray-400">{tasksByExecutive[ex.id]?.tasks.length ?? 0} task{(tasksByExecutive[ex.id]?.tasks.length ?? 0) !== 1 ? 's' : ''}</p>
+                    <p className="text-xs text-gray-400">Executive</p>
                   </div>
                 ))}
               </div>
@@ -339,131 +350,227 @@ export default function AssignmentDetailPage() {
           </div>
         )}
 
-        {/* Tasks + Observations */}
+        {/* Areas of Audit + Observations */}
         <div className="grid grid-cols-2 gap-6">
+
+          {/* Areas of Audit */}
           <div className="bg-white rounded-xl border border-gray-100 shadow-sm">
             <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-              <h3 className="font-semibold text-gray-900">Tasks ({tasks.length})</h3>
-              {canAddTasksAsManager && !isPreviousAM && (
-                <button onClick={() => setShowTaskForm(!showTaskForm)} className="text-sm text-blue-600 hover:underline">
-                  {showTaskForm ? 'Cancel' : '+ Add Task'}
+              <div>
+                <h3 className="font-semibold text-gray-900">Areas of Audit ({areas.length})</h3>
+                {totalSubAreas > 0 && (
+                  <p className="text-xs text-gray-400 mt-0.5">{completedSubAreas}/{totalSubAreas} sub-areas completed</p>
+                )}
+              </div>
+              {(canManage && !isPreviousAM) && (
+                <button onClick={() => setShowAreaForm(!showAreaForm)} className="text-sm text-blue-600 hover:underline">
+                  {showAreaForm ? 'Cancel' : '+ Add Area'}
                 </button>
               )}
               {isExecutive && (
-                <button onClick={() => setShowTaskForm(!showTaskForm)} className="text-sm text-blue-600 hover:underline">
-                  {showTaskForm ? 'Cancel' : '+ Take Up Task'}
+                <button onClick={() => setShowAreaForm(!showAreaForm)} className="text-sm text-blue-600 hover:underline">
+                  {showAreaForm ? 'Cancel' : '+ Take Up Area'}
                 </button>
               )}
             </div>
 
-            {/* Task Form */}
-            {showTaskForm && (
+            {/* Add Area Form */}
+            {showAreaForm && (
               <div className="px-6 py-4 bg-blue-50 border-b border-blue-100 space-y-3">
-                <input placeholder="Task title *" value={taskForm.title}
-                  onChange={e => setTaskForm({ ...taskForm, title: e.target.value })}
+                <input placeholder="Area name (e.g. Cash & Bank, Inventory) *" value={areaForm.title}
+                  onChange={e => setAreaForm({ ...areaForm, title: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                {/* Executives assigned by manager/AM; executives self-assign */}
-                {canAddTasksAsManager && (
-                  <select value={taskForm.assigned_to} onChange={e => setTaskForm({ ...taskForm, assigned_to: e.target.value })}
+                {canManage && (
+                  <select value={areaForm.assigned_to} onChange={e => setAreaForm({ ...areaForm, assigned_to: e.target.value })}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
                     <option value="">Assign to Executive *</option>
                     {executives.map(ex => <option key={ex.id} value={ex.id}>{ex.full_name}</option>)}
                   </select>
                 )}
-                {isExecutive && (
-                  <p className="text-xs text-blue-700 bg-blue-100 px-3 py-1.5 rounded-lg">This task will be assigned to you</p>
-                )}
+                {isExecutive && <p className="text-xs text-blue-700 bg-blue-100 px-3 py-1.5 rounded-lg">This area will be assigned to you</p>}
                 <div className="grid grid-cols-2 gap-2">
-                  <select value={taskForm.priority} onChange={e => setTaskForm({ ...taskForm, priority: e.target.value })}
+                  <select value={areaForm.priority} onChange={e => setAreaForm({ ...areaForm, priority: e.target.value })}
                     className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
                     <option value="low">Low Priority</option>
                     <option value="medium">Medium Priority</option>
                     <option value="high">High Priority</option>
                   </select>
-                  <input type="date" value={taskForm.due_date} onChange={e => setTaskForm({ ...taskForm, due_date: e.target.value })}
+                  <input type="date" value={areaForm.due_date} onChange={e => setAreaForm({ ...areaForm, due_date: e.target.value })}
                     className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
                 </div>
-                <button
-                  onClick={isExecutive ? selfAssignTask : addTask}
-                  disabled={savingTask || (!isExecutive && !taskForm.assigned_to) || !taskForm.title || !taskForm.due_date}
+                <button onClick={addArea} disabled={savingArea || !areaForm.title || !areaForm.due_date || (!isExecutive && !areaForm.assigned_to)}
                   className="w-full bg-blue-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
-                  {savingTask ? 'Adding...' : isExecutive ? 'Take Up This Task' : 'Add Task'}
+                  {savingArea ? 'Adding...' : isExecutive ? 'Take Up This Area' : 'Add Area'}
                 </button>
               </div>
             )}
 
-            {tasks.length === 0 ? (
-              <div className="px-6 py-8 text-center text-gray-400 text-sm">No tasks yet.</div>
+            {areas.length === 0 ? (
+              <div className="px-6 py-8 text-center text-gray-400 text-sm">No audit areas yet.</div>
             ) : (
               <div className="divide-y divide-gray-50">
-                {tasks.map(t => {
-                  const tId = t.id as string
-                  const isMyTask = (t.assigned_to as string) === currentProfile?.id
-                  const canUpdateStatus = isMyTask && isExecutive
-                  const isBeingDelegated = delegatingTask === tId
-                  // Other involved executives I can delegate to (not myself)
-                  const delegatableExecutives = involvedExecutives.filter(e => e.id !== currentProfile?.id)
+                {areas.map(area => {
+                  const aId = area.id as string
+                  const isAreaOpen = expandedAreas[aId] ?? false
+                  const isMyArea = (area.assigned_to as string) === currentProfile?.id
+                  const canUpdateArea = isMyArea && isExecutive
 
                   return (
-                    <div key={tId}>
-                      <div className="px-6 py-3 flex items-center justify-between">
-                        <div className="flex-1 min-w-0">
-                          <Link href={`/tasks/${tId}`} className="font-medium text-sm text-gray-900 hover:text-blue-600">
-                            {t.title as string}
-                          </Link>
-                          <div className="flex items-center gap-2 text-xs text-gray-500 mt-0.5">
-                            <span>→ {(t.assignee as { full_name?: string })?.full_name ?? 'Unassigned'}</span>
-                            {(t.delegated_from as string) && (
-                              <span className="px-1.5 py-0.5 bg-purple-50 text-purple-600 rounded font-medium">Delegated</span>
+                    <div key={aId}>
+                      {/* Area row */}
+                      <div className="px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          {/* Expand toggle */}
+                          <button onClick={() => setExpandedAreas(prev => ({ ...prev, [aId]: !isAreaOpen }))}
+                            className="w-5 h-5 flex items-center justify-center rounded hover:bg-gray-200 text-gray-400 flex-shrink-0">
+                            <svg className={`w-3 h-3 transition-transform duration-200 ${isAreaOpen ? 'rotate-90' : ''}`}
+                              fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                            </svg>
+                          </button>
+
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-semibold text-gray-800">{area.title as string}</span>
+                              <span className="text-xs text-gray-400">({(area.subAreas ?? []).length} sub-areas)</span>
+                            </div>
+                            <p className="text-xs text-gray-400 mt-0.5">
+                              → {area._assigneeName as string} · Due {area.due_date as string}
+                            </p>
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            {canUpdateArea ? (
+                              <select value={area.status as string} onChange={e => updateAreaStatus(aId, e.target.value)}
+                                disabled={updatingStatus === aId}
+                                className={`text-xs font-medium px-2 py-0.5 rounded-full border-0 cursor-pointer ${AREA_STATUS_COLORS[area.status as string] ?? 'bg-gray-100 text-gray-700'}`}>
+                                <option value="not_started">Not Started</option>
+                                <option value="in_progress">In Progress</option>
+                                <option value="completed">Completed</option>
+                                <option value="overdue">Overdue</option>
+                              </select>
+                            ) : (
+                              <span className={`text-xs px-2 py-0.5 rounded-full ${AREA_STATUS_COLORS[area.status as string] ?? 'bg-gray-100 text-gray-700'}`}>
+                                {(area.status as string).replace(/_/g, ' ')}
+                              </span>
                             )}
-                            <span>· Due {t.due_date as string}</span>
+                            {/* Add sub-area button */}
+                            {(canManage || isExecutive) && !isPreviousAM && (
+                              <button onClick={() => setShowSubAreaForm(showSubAreaForm === aId ? null : aId)}
+                                className="text-xs text-indigo-600 border border-indigo-200 px-2 py-0.5 rounded hover:bg-indigo-50">
+                                {showSubAreaForm === aId ? '✕' : '+ Sub-area'}
+                              </button>
+                            )}
                           </div>
                         </div>
-                        <div className="flex items-center gap-2 ml-3">
-                          {canUpdateStatus ? (
-                            <select
-                              value={t.status as string}
-                              onChange={e => updateTaskStatus(tId, e.target.value)}
-                              disabled={updatingTaskStatus === tId}
-                              className={`text-xs font-medium px-2 py-0.5 rounded-full border-0 cursor-pointer ${TASK_STATUS_COLORS[t.status as string] ?? 'bg-gray-100 text-gray-700'}`}
-                            >
-                              <option value="not_started">Not Started</option>
-                              <option value="in_progress">In Progress</option>
-                              <option value="completed">Completed</option>
-                              <option value="overdue">Overdue</option>
-                            </select>
-                          ) : (
-                            <span className={`text-xs px-2 py-0.5 rounded-full ${TASK_STATUS_COLORS[t.status as string] ?? 'bg-gray-100 text-gray-700'}`}>
-                              {(t.status as string).replace(/_/g, ' ')}
-                            </span>
-                          )}
-                          {/* Delegate button — only for executive who owns the task */}
-                          {isMyTask && isExecutive && delegatableExecutives.length > 0 && (
-                            <button
-                              onClick={() => { setDelegatingTask(isBeingDelegated ? null : tId); setDelegateTo(''); setDelegateNote('') }}
-                              className="text-xs text-purple-600 border border-purple-200 px-2 py-0.5 rounded hover:bg-purple-50"
-                            >
-                              {isBeingDelegated ? 'Cancel' : 'Delegate'}
+
+                        {/* Add sub-area form */}
+                        {showSubAreaForm === aId && (
+                          <div className="mt-3 ml-7 p-3 bg-indigo-50 border border-indigo-100 rounded-lg space-y-2">
+                            <p className="text-xs font-semibold text-indigo-800">Add Sub-area to: {area.title as string}</p>
+                            <input placeholder="Sub-area name (e.g. Cash Vouching, Bank Reconciliation) *"
+                              value={subAreaForm.title} onChange={e => setSubAreaForm({ ...subAreaForm, title: e.target.value })}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+                            {canManage && (
+                              <select value={subAreaForm.assigned_to} onChange={e => setSubAreaForm({ ...subAreaForm, assigned_to: e.target.value })}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400">
+                                <option value="">Assign to Executive *</option>
+                                {executives.map(ex => <option key={ex.id} value={ex.id}>{ex.full_name}</option>)}
+                              </select>
+                            )}
+                            {isExecutive && <p className="text-xs text-indigo-700 bg-indigo-100 px-3 py-1.5 rounded-lg">Will be assigned to you</p>}
+                            <div className="grid grid-cols-2 gap-2">
+                              <select value={subAreaForm.priority} onChange={e => setSubAreaForm({ ...subAreaForm, priority: e.target.value })}
+                                className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400">
+                                <option value="low">Low</option>
+                                <option value="medium">Medium</option>
+                                <option value="high">High</option>
+                              </select>
+                              <input type="date" value={subAreaForm.due_date} onChange={e => setSubAreaForm({ ...subAreaForm, due_date: e.target.value })}
+                                className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+                            </div>
+                            <button onClick={() => addSubArea(aId)}
+                              disabled={savingSubArea || !subAreaForm.title || !subAreaForm.due_date || (!isExecutive && !subAreaForm.assigned_to)}
+                              className="w-full bg-indigo-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50">
+                              {savingSubArea ? 'Adding...' : 'Add Sub-area'}
                             </button>
-                          )}
-                        </div>
+                          </div>
+                        )}
                       </div>
 
-                      {/* Delegate panel */}
-                      {isBeingDelegated && (
-                        <div className="mx-6 mb-3 p-3 bg-purple-50 border border-purple-100 rounded-lg space-y-2">
-                          <p className="text-xs font-semibold text-purple-800">Delegate to another executive on this assignment</p>
-                          <select value={delegateTo} onChange={e => setDelegateTo(e.target.value)}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-400">
-                            <option value="">— Select Executive —</option>
-                            {delegatableExecutives.map(e => <option key={e.id} value={e.id}>{e.full_name}</option>)}
-                          </select>
-                          <input value={delegateNote} onChange={e => setDelegateNote(e.target.value)}
-                            placeholder="Reason / note (optional)"
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-400" />
-                          <button onClick={delegateTask} disabled={!delegateTo || savingDelegate}
-                            className="w-full bg-purple-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-purple-700 disabled:opacity-50">
-                            {savingDelegate ? 'Delegating...' : 'Confirm Delegation'}
+                      {/* Sub-areas (expanded) */}
+                      {isAreaOpen && (area.subAreas ?? []).length > 0 && (
+                        <div className="ml-9 border-l-2 border-indigo-100 mb-2">
+                          {(area.subAreas ?? []).map(sub => {
+                            const sId = sub.id as string
+                            const isMySubArea = (sub.assigned_to as string) === currentProfile?.id
+                            const canUpdateSub = isMySubArea && isExecutive
+                            const isBeingDelegated = delegatingSubArea === sId
+                            const delegatableExecutives = involvedExecutives.filter(e => e.id !== currentProfile?.id)
+
+                            return (
+                              <div key={sId} className="pl-4 pr-4 py-2.5 border-b border-indigo-50 last:border-0">
+                                <div className="flex items-center justify-between">
+                                  <div>
+                                    <p className="text-sm text-gray-700 font-medium">{sub.title as string}</p>
+                                    <div className="flex items-center gap-2 text-xs text-gray-400 mt-0.5">
+                                      <span>→ {sub._assigneeName as string}</span>
+                                      {(sub.delegated_from as string) && <span className="px-1.5 py-0.5 bg-purple-50 text-purple-600 rounded font-medium">Delegated</span>}
+                                      <span>· Due {sub.due_date as string}</span>
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    {canUpdateSub ? (
+                                      <select value={sub.status as string} onChange={e => updateAreaStatus(sId, e.target.value, aId)}
+                                        disabled={updatingStatus === sId}
+                                        className={`text-xs font-medium px-2 py-0.5 rounded-full border-0 cursor-pointer ${AREA_STATUS_COLORS[sub.status as string] ?? 'bg-gray-100 text-gray-700'}`}>
+                                        <option value="not_started">Not Started</option>
+                                        <option value="in_progress">In Progress</option>
+                                        <option value="completed">Completed</option>
+                                        <option value="overdue">Overdue</option>
+                                      </select>
+                                    ) : (
+                                      <span className={`text-xs px-2 py-0.5 rounded-full ${AREA_STATUS_COLORS[sub.status as string] ?? 'bg-gray-100 text-gray-700'}`}>
+                                        {(sub.status as string).replace(/_/g, ' ')}
+                                      </span>
+                                    )}
+                                    {isMySubArea && isExecutive && delegatableExecutives.length > 0 && (
+                                      <button onClick={() => { setDelegatingSubArea(isBeingDelegated ? null : sId); setDelegateTo(''); setDelegateNote('') }}
+                                        className="text-xs text-purple-600 border border-purple-200 px-2 py-0.5 rounded hover:bg-purple-50">
+                                        {isBeingDelegated ? 'Cancel' : 'Delegate'}
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                                {/* Delegation panel */}
+                                {isBeingDelegated && (
+                                  <div className="mt-2 p-3 bg-purple-50 border border-purple-100 rounded-lg space-y-2">
+                                    <select value={delegateTo} onChange={e => setDelegateTo(e.target.value)}
+                                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-400">
+                                      <option value="">— Select Executive —</option>
+                                      {delegatableExecutives.map(e => <option key={e.id} value={e.id}>{e.full_name}</option>)}
+                                    </select>
+                                    <input value={delegateNote} onChange={e => setDelegateNote(e.target.value)}
+                                      placeholder="Reason (optional)"
+                                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-400" />
+                                    <button onClick={delegateSubArea} disabled={!delegateTo || savingDelegate}
+                                      className="w-full bg-purple-600 text-white py-1.5 rounded-lg text-sm font-medium hover:bg-purple-700 disabled:opacity-50">
+                                      {savingDelegate ? 'Delegating...' : 'Confirm Delegation'}
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )}
+
+                      {/* Expand hint if area has sub-areas but is collapsed */}
+                      {!isAreaOpen && (area.subAreas ?? []).length > 0 && (
+                        <div className="ml-9 px-4 pb-2">
+                          <button onClick={() => setExpandedAreas(prev => ({ ...prev, [aId]: true }))}
+                            className="text-xs text-indigo-500 hover:underline">
+                            Show {(area.subAreas ?? []).length} sub-area{(area.subAreas ?? []).length !== 1 ? 's' : ''}
                           </button>
                         </div>
                       )}
@@ -546,9 +653,7 @@ export default function AssignmentDetailPage() {
                 <select value={handoverForm.to_am} onChange={e => setHandoverForm({ ...handoverForm, to_am: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
                   <option value="">— Select Assistant Manager —</option>
-                  {otherAMs.filter(a => a.id !== currentProfile?.id).map(a => (
-                    <option key={a.id} value={a.id}>{a.full_name}</option>
-                  ))}
+                  {otherAMs.filter(a => a.id !== currentProfile?.id).map(a => <option key={a.id} value={a.id}>{a.full_name}</option>)}
                 </select>
               </div>
               <div>
@@ -566,8 +671,7 @@ export default function AssignmentDetailPage() {
               {handoverForm.type === 'temporary' && (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Return Date</label>
-                  <input type="date" value={handoverForm.return_date}
-                    onChange={e => setHandoverForm({ ...handoverForm, return_date: e.target.value })}
+                  <input type="date" value={handoverForm.return_date} onChange={e => setHandoverForm({ ...handoverForm, return_date: e.target.value })}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
                 </div>
               )}
