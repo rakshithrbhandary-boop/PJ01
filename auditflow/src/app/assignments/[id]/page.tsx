@@ -359,28 +359,55 @@ export default function AssignmentDetailPage() {
     URL.revokeObjectURL(url)
   }
 
+  function parseCellDate(val: unknown): string {
+    if (!val) return ''
+    if (typeof val === 'number') {
+      // Excel serial date → JS Date
+      const d = XLSX.SSF.parse_date_code(val)
+      if (d) {
+        const mm = String(d.m).padStart(2, '0')
+        const dd = String(d.d).padStart(2, '0')
+        return `${d.y}-${mm}-${dd}`
+      }
+    }
+    const s = String(val).trim()
+    // Accept YYYY-MM-DD or M/D/YYYY or D/M/YYYY
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s
+    const parsed = new Date(s)
+    if (!isNaN(parsed.getTime())) {
+      return parsed.toISOString().slice(0, 10)
+    }
+    return s
+  }
+
   async function handleExcelUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
     const buffer = await file.arrayBuffer()
-    const wb = XLSX.read(buffer)
+    const wb = XLSX.read(buffer, { cellDates: true })
     const ws = wb.Sheets['Areas']
     if (!ws) { alert('Sheet "Areas" not found. Please use the downloaded template.'); return }
 
-    const raw = XLSX.utils.sheet_to_json<Record<string, string>>(ws, { raw: false })
+    const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { raw: true, defval: '' })
+
+    const execNameMap = new Map(executives.map(e => [e.full_name.trim().toLowerCase(), e]))
 
     const updates: PendingUpdate[] = []
+    const skipped: string[] = []
     for (const row of raw) {
-      const rowId = row['ID']?.trim() || null
-      const areaTitle = row['Area']?.trim()
-      const subAreaTitle = row['Sub-Area']?.trim()
+      const rowId = (String(row['ID'] ?? '').trim()) || null
+      const areaTitle = String(row['Area'] ?? '').trim()
+      const subAreaTitle = String(row['Sub-Area'] ?? '').trim()
       const rowType: 'Area' | 'Sub-Area' = subAreaTitle ? 'Sub-Area' : 'Area'
       if (!areaTitle) continue
 
-      const newAssignee = row['Assigned To Executive']?.trim()
-      const exec = executives.find(e => e.full_name === newAssignee)
-      const priorityVal = row['Priority']?.trim()
-      const dueVal = row['Due Date (YYYY-MM-DD)']?.trim()
+      const newAssignee = String(row['Assigned To Executive'] ?? '').trim()
+      const exec = execNameMap.get(newAssignee.toLowerCase())
+      const priorityVal = String(row['Priority'] ?? '').trim()
+      const rawDue = row['Due Date (YYYY-MM-DD)']
+      const dueVal = rawDue instanceof Date
+        ? rawDue.toISOString().slice(0, 10)
+        : parseCellDate(rawDue)
 
       if (rowId) {
         // Existing row — check for changes
@@ -403,10 +430,15 @@ export default function AssignmentDetailPage() {
         }
       } else {
         // New row — create it
-        if (!exec || !dueVal) continue // must have assignee and due date
+        if (!exec || !dueVal) {
+          const label = subAreaTitle || areaTitle
+          if (!exec) skipped.push(`"${label}" — executive "${newAssignee}" not found (check spelling)`)
+          else skipped.push(`"${label}" — missing due date`)
+          continue
+        }
         const titleForNew = rowType === 'Sub-Area' ? subAreaTitle : areaTitle
         const parentArea = rowType === 'Sub-Area' ? areas.find(a => (a.title as string) === areaTitle) : undefined
-        if (rowType === 'Sub-Area' && !parentArea) continue // can't find parent area
+        if (rowType === 'Sub-Area' && !parentArea) { skipped.push(`"${subAreaTitle}" — parent area "${areaTitle}" not found`); continue }
         updates.push({
           id: null,
           isNew: true,
@@ -424,7 +456,10 @@ export default function AssignmentDetailPage() {
     }
 
     if (updates.length === 0) {
-      alert('No changes or new rows detected. Make sure Assigned To and Due Date are filled for new rows.')
+      const hint = skipped.length > 0
+        ? `\n\nSkipped rows:\n${skipped.join('\n')}`
+        : '\n\nMake sure:\n• "Assigned To Executive" exactly matches an executive name\n• "Due Date (YYYY-MM-DD)" is filled'
+      alert(`No changes or new rows detected.${hint}`)
       return
     }
     setPendingUpdates(updates)
