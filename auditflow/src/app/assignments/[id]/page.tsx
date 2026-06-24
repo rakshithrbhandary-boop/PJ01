@@ -654,13 +654,11 @@ export default function AssignmentDetailPage() {
                 )}
               </div>
               <div className="flex items-center gap-2">
-                {areas.length > 0 && (
-                  <button onClick={downloadAreaExcel}
-                    className="text-xs text-gray-500 border border-gray-200 px-2.5 py-1.5 rounded-lg hover:bg-gray-50 flex items-center gap-1.5">
-                    ⬇ Excel
-                  </button>
-                )}
-                {canManage && areas.length > 0 && (
+                <button onClick={downloadAreaExcel}
+                  className="text-xs text-gray-500 border border-gray-200 px-2.5 py-1.5 rounded-lg hover:bg-gray-50 flex items-center gap-1.5">
+                  ⬇ Excel
+                </button>
+                {canManage && (
                   <>
                     <button onClick={() => fileInputRef.current?.click()}
                       className="text-xs text-green-700 border border-green-200 px-2.5 py-1.5 rounded-lg hover:bg-green-50 flex items-center gap-1.5">
