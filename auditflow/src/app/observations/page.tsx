@@ -289,6 +289,14 @@ export default function ObservationsPage() {
                                 {hasComments && !canComment && (
                                   <div className="border-t border-gray-200 pt-3">
                                     <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Your Acknowledgement</p>
+                                    {(o.status as string) === 'closed' ? (
+                                      <div className="flex items-center gap-2">
+                                        <span className="px-3 py-2 bg-gray-100 text-gray-500 rounded-lg text-sm">
+                                          {EXEC_RESP_LABELS[execResponses[oId] ?? (o.executive_response as string)] ?? (o.executive_response as string) ?? '—'}
+                                        </span>
+                                        <span className="text-xs text-gray-400">Locked (observation closed)</span>
+                                      </div>
+                                    ) : (
                                     <div className="flex items-center gap-3" onClick={e => e.stopPropagation()}>
                                       <select value={execResponses[oId] ?? (o.executive_response as string) ?? ''}
                                         onChange={async e => {
@@ -308,6 +316,7 @@ export default function ObservationsPage() {
                                       {savingExec === oId && <span className="text-gray-400 text-sm">Saving...</span>}
                                       {execResponses[oId] && savingExec !== oId && <span className="text-green-600 text-sm">✓ Saved</span>}
                                     </div>
+                                    )}
                                   </div>
                                 )}
 

@@ -246,6 +246,14 @@ export default function ObservationDetailPage() {
           {hasComments && !canComment && (
             <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
               <p className="text-xs text-gray-500 uppercase tracking-wider mb-3">Your Acknowledgement</p>
+              {(obs.status as string) === 'closed' ? (
+                <div className="flex items-center gap-2">
+                  <span className="px-3 py-2 bg-gray-100 text-gray-500 rounded-lg text-sm">
+                    {EXEC_RESP_LABELS[execResponse] ?? execResponse ?? '—'}
+                  </span>
+                  <span className="text-xs text-gray-400">Locked (observation closed)</span>
+                </div>
+              ) : (
               <div className="flex items-center gap-3">
                 <select value={execResponse} onChange={e => saveExecResponse(e.target.value)}
                   className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
@@ -257,6 +265,7 @@ export default function ObservationDetailPage() {
                 {savingExec && <span className="text-gray-400 text-sm">Saving...</span>}
                 {execResponse && !savingExec && <span className="text-green-600 text-sm">✓ Saved</span>}
               </div>
+              )}
             </div>
           )}
 
