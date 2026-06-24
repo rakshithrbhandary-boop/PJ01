@@ -74,6 +74,7 @@ export default function AssignmentDetailPage() {
   const [allExecWorkload, setAllExecWorkload] = useState<Record<string, { activeAreas: number; latestDue: string | null }>>({})
   const [addingExec, setAddingExec] = useState<string | null>(null)
   const [execSearch, setExecSearch] = useState('')
+  const [execError, setExecError] = useState<string | null>(null)
   const [processingReturn, setProcessingReturn] = useState<string | null>(null)
 
   useEffect(() => {
@@ -291,12 +292,17 @@ export default function AssignmentDetailPage() {
 
   async function addExecToAssignment(execId: string) {
     setAddingExec(execId)
-    const { data } = await supabase.from('assignment_executives').insert({
+    setExecError(null)
+    const { data, error } = await supabase.from('assignment_executives').insert({
       assignment_id: id as string,
       executive_id: execId,
       added_by: currentProfile?.id,
     }).select('id, executive_id').single()
-    if (data) setAssignmentExecutives(prev => [...prev, data])
+    if (error) {
+      setExecError(error.message)
+    } else if (data) {
+      setAssignmentExecutives(prev => [...prev, data])
+    }
     setAddingExec(null)
   }
 
@@ -304,8 +310,13 @@ export default function AssignmentDetailPage() {
     const row = assignmentExecutives.find(r => r.executive_id === execId)
     if (!row) return
     setAddingExec(execId)
-    await supabase.from('assignment_executives').delete().eq('id', row.id)
-    setAssignmentExecutives(prev => prev.filter(r => r.executive_id !== execId))
+    setExecError(null)
+    const { error } = await supabase.from('assignment_executives').delete().eq('id', row.id)
+    if (error) {
+      setExecError(error.message)
+    } else {
+      setAssignmentExecutives(prev => prev.filter(r => r.executive_id !== execId))
+    }
     setAddingExec(null)
   }
 
@@ -839,6 +850,11 @@ export default function AssignmentDetailPage() {
               </div>
               <button onClick={() => setShowExecModal(false)} className="text-gray-400 hover:text-gray-600 text-xl font-light leading-none">×</button>
             </div>
+            {execError && (
+              <div className="px-6 py-2 bg-red-50 border-b border-red-100 text-xs text-red-700">
+                Error: {execError}
+              </div>
+            )}
             <div className="px-6 py-3 border-b border-gray-100">
               <input
                 placeholder="Search executives..."
